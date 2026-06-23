@@ -9,3 +9,4 @@ sib-api-v3-sdk==7.6.0
 gunicorn==22.0.0
 whitenoise==6.7.0
 requests==2.32.3
+django-anymail==11.1

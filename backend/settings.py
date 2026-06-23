@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "corsheaders",
+    "anymail",
     "visitors",
     "leads",
     "enrichment",
@@ -127,13 +128,8 @@ CORS_ALLOWED_ORIGINS = env.list(
 )
 CORS_ALLOW_CREDENTIALS = True
 
-# ─── Email (Brevo SMTP) ─────────────────────────────────────────────
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = env("EMAIL_HOST", default="smtp-relay.brevo.com")
-EMAIL_PORT = env.int("EMAIL_PORT", default=587)
-EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
-EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
-EMAIL_USE_TLS = True
+# ─── Email (Brevo via Anymail HTTP API — no SMTP, works reliably on Render) ──
+EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
 DEFAULT_FROM_EMAIL = env(
     "DEFAULT_FROM_EMAIL", default="Scape Data Solutions <info@scapedatasolutions.com>"
 )
@@ -141,6 +137,10 @@ WELCOME_FROM_EMAIL = env(
     "WELCOME_FROM_EMAIL", default="Scape Data Solutions <noreply@scapedatasolutions.com>"
 )
 REPLY_TO_EMAIL = env("REPLY_TO_EMAIL", default="info@scapedatasolutions.com")
+
+ANYMAIL = {
+    "BREVO_API_KEY": env("BREVO_API_KEY", default=""),
+}
 
 # ─── Brevo API (contact sync) ──────────────────────────────────────
 BREVO_API_KEY = env("BREVO_API_KEY", default="")
