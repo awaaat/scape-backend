@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 import threading
@@ -6,33 +7,15 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
-from email.mime.image import MIMEImage
 
 logger = logging.getLogger("leads")
 
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "templates", "email", "logo_email.png")
 
-def _send_html_email_with_logo(subject, template_name, context, to_emails, from_email=None, reply_to=None):
-    html_body = render_to_string(template_name, context)
-    text_body = strip_tags(html_body)
-    msg = EmailMultiAlternatives(
-        subject=subject,
-        body=text_body,
-        from_email=from_email or settings.DEFAULT_FROM_EMAIL,
-        to=to_emails,
-        reply_to=reply_to or None,
-    )
-    msg.attach_alternative(html_body, "text/html")
-    msg.mixed_subtype = "related"
-
-    # Attach logo as inline CID image
-    logo_path = os.path.join(os.path.dirname(__file__), "templates", "email", "logo_email.png")
-    with open(logo_path, "rb") as f:
-        logo = MIMEImage(f.read())
-        logo.add_header("Content-ID", "<logo_email>")
-        logo.add_header("Content-Disposition", "inline", filename="logo_email.png")
-        msg.attach(logo)
-
-    msg.send(fail_silently=False)
+def _get_logo_data_uri():
+    with open(LOGO_PATH, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
 
 
 def _send_html_email(subject, template_name, context, to_emails, from_email=None, reply_to=None):
@@ -59,11 +42,16 @@ def send_user_welcome(lead):
     name_parts = lead.name.strip().split()
     surname = name_parts[-1] if len(name_parts) > 1 else name_parts[0]
 
-    context = {"lead": lead, "site": settings.SITE_DOMAIN, "surname": surname}
+    context = {
+        "lead": lead,
+        "site": settings.SITE_DOMAIN,
+        "surname": surname,
+        "logo_data_uri": _get_logo_data_uri(),
+    }
 
     def _send():
         try:
-            _send_html_email_with_logo(
+            _send_html_email(
                 subject=f"We received your message, {surname}",
                 template_name="email/user_welcome.html",
                 context=context,
