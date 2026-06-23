@@ -9,28 +9,28 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f6; padding:32px 16px;">
   <tr>
     <td align="center">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#ffffff; border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(13,43,107,0.08);">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#ffffff; box-shadow:0 6px 24px rgba(13,43,107,0.08);">
 
         <!-- Header -->
         <tr>
           <td style="background-color:#0d2b6b; padding:36px 40px; text-align:center;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td align="center">
-                  <span style="display:inline-block; width:48px; height:48px; line-height:48px; border-radius:50%; background-color:#fdb840; color:#0d2b6b; font-size:22px; font-weight:bold; font-family:Helvetica, Arial, sans-serif;">S</span>
-                </td>
-              </tr>
-              <tr>
-                <td align="center" style="padding-top:14px;">
-                  <span style="color:#ffffff; font-size:21px; font-weight:700; letter-spacing:0.3px; font-family:Helvetica, Arial, sans-serif;">Scape Data Solutions</span>
-                </td>
-              </tr>
-              <tr>
-                <td align="center" style="padding-top:4px;">
-                  <span style="color:#aebcdc; font-size:13px; font-family:Helvetica, Arial, sans-serif;">Data-driven intelligence for your business</span>
-                </td>
-              </tr>
-            </table>
+            <a href="{{ site }}" style="text-decoration:none; display:inline-block;">
+              <!-- Inline SVG logo — icon box only, colors adapted for dark bg -->
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 468 135" width="220" height="64" style="display:block; margin:0 auto;">
+                <rect x="0" y="5" width="95" height="95" rx="0" fill="#ffffff" style="fill:#ffffff;stroke:none;opacity:0.08"/>
+                <rect x="0" y="5" width="95" height="95" rx="0" fill="none" stroke="#fdb840" stroke-width="2"/>
+                <path d="M19 34 Q28 16 47 16 Q66 16 68 30 Q70 44 56 50 Q42 56 40 68 Q38 80 52 84 Q66 88 75 76" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+                <circle cx="75" cy="76" r="8" fill="#fdb840"/>
+                <circle cx="19" cy="34" r="5" fill="#93c5fd"/>
+                <text x="108" y="62" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="48px" fill="#ffffff" letter-spacing="-0.5">SCAPE</text>
+                <text x="111" y="83" font-family="Arial, Helvetica, sans-serif" font-size="16px" letter-spacing="0.5">
+                  <tspan font-weight="400" fill="#aebcdc">DATA </tspan>
+                  <tspan font-weight="800" fill="#fdb840">SOLUTIONS</tspan>
+                </text>
+                <line x1="111" y1="89" x2="458" y2="89" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
+                <text x="108" y="118" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="28px" font-weight="900" fill="rgba(255,255,255,0.55)" letter-spacing="4">DATA ARCHITECTS</text>
+              </svg>
+            </a>
           </td>
         </tr>
 
@@ -38,7 +38,7 @@
         <tr>
           <td style="padding:40px 40px 8px;">
             <p style="margin:0 0 4px; color:#9aa2b1; font-size:12px; letter-spacing:1px; text-transform:uppercase; font-family:Helvetica, Arial, sans-serif;">Message received</p>
-            <h1 style="margin:0 0 20px; color:#0d2b6b; font-size:23px; font-family:Helvetica, Arial, sans-serif;">Hi {{ lead.name }}, thank you for reaching out.</h1>
+            <h1 style="margin:0 0 20px; color:#0d2b6b; font-size:23px; font-family:Helvetica, Arial, sans-serif;">Hi {{ surname }}, thank you for reaching out.</h1>
             <p style="margin:0 0 16px; color:#374151; font-size:15px; line-height:1.7; font-family:Helvetica, Arial, sans-serif;">
               We've received your enquiry about
               <strong style="color:#0d2b6b;">{{ lead.service }}</strong>
@@ -53,21 +53,21 @@
         <!-- What happens next -->
         <tr>
           <td style="padding:0 40px 32px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f6f8fc; border-radius:8px; border:1px solid #e7ebf3;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f6f8fc; border:1px solid #e7ebf3;">
               <tr>
                 <td style="padding:20px 24px;">
                   <p style="margin:0 0 12px; color:#0d2b6b; font-size:13px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; font-family:Helvetica, Arial, sans-serif;">What happens next</p>
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                     <tr>
-                      <td width="28" valign="top" style="padding:6px 0;"><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#fdb840; margin-top:6px;"></span></td>
+                      <td width="28" valign="top" style="padding:6px 0;"><span style="display:inline-block; width:8px; height:8px; background-color:#fdb840; margin-top:6px;"></span></td>
                       <td style="padding:6px 0; color:#374151; font-size:14px; font-family:Helvetica, Arial, sans-serif;">Our team reviews the details you shared</td>
                     </tr>
                     <tr>
-                      <td width="28" valign="top" style="padding:6px 0;"><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#fdb840; margin-top:6px;"></span></td>
+                      <td width="28" valign="top" style="padding:6px 0;"><span style="display:inline-block; width:8px; height:8px; background-color:#fdb840; margin-top:6px;"></span></td>
                       <td style="padding:6px 0; color:#374151; font-size:14px; font-family:Helvetica, Arial, sans-serif;">A specialist matched to {{ lead.service }} reaches out</td>
                     </tr>
                     <tr>
-                      <td width="28" valign="top" style="padding:6px 0;"><span style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#fdb840; margin-top:6px;"></span></td>
+                      <td width="28" valign="top" style="padding:6px 0;"><span style="display:inline-block; width:8px; height:8px; background-color:#fdb840; margin-top:6px;"></span></td>
                       <td style="padding:6px 0; color:#374151; font-size:14px; font-family:Helvetica, Arial, sans-serif;">We schedule a short call or send next steps by email</td>
                     </tr>
                   </table>
@@ -82,7 +82,7 @@
           <td align="center" style="padding:0 40px 40px;">
             <table role="presentation" cellpadding="0" cellspacing="0">
               <tr>
-                <td style="border-radius:6px; background-color:#fdb840;">
+                <td style="background-color:#fdb840;">
                   <a href="{{ site }}" style="display:inline-block; padding:13px 30px; font-size:14px; font-weight:700; color:#0d2b6b; text-decoration:none; font-family:Helvetica, Arial, sans-serif;">Visit our website</a>
                 </td>
               </tr>
@@ -94,7 +94,7 @@
         <tr>
           <td style="background-color:#f6f8fc; padding:24px 40px; border-top:1px solid #e7ebf3;">
             <p style="margin:0 0 6px; color:#9aa2b1; font-size:12px; font-family:Helvetica, Arial, sans-serif;">&copy; {% now "Y" %} Scape Data Solutions. All rights reserved.</p>
-            <p style="margin:0; color:#9aa2b1; font-size:12px; font-family:Helvetica, Arial, sans-serif;">You're receiving this because you submitted a form at {{ site }}.</p>
+            <p style="margin:0; color:#9aa2b1; font-size:12px; font-family:Helvetica, Arial, sans-serif;">You're receiving this because you submitted a form at <a href="{{ site }}" style="color:#9aa2b1;">{{ site }}</a>.</p>
           </td>
         </tr>
 
