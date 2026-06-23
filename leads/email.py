@@ -1,6 +1,4 @@
-import base64
 import logging
-import os
 import threading
 
 from django.conf import settings
@@ -9,14 +7,6 @@ from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 
 logger = logging.getLogger("leads")
-
-LOGO_PATH = os.path.join(os.path.dirname(__file__), "templates", "email", "logo_email.png")
-
-
-def _get_logo_data_uri():
-    with open(LOGO_PATH, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode("utf-8")
-    return f"data:image/png;base64,{encoded}"
 
 
 def _send_html_email(subject, template_name, context, to_emails, from_email=None, reply_to=None):
@@ -46,7 +36,6 @@ def send_user_welcome(lead):
         "lead": lead,
         "site": settings.SITE_DOMAIN,
         "surname": surname,
-        "logo_data_uri": _get_logo_data_uri(),
     }
 
     def _send():
