@@ -18,11 +18,28 @@ class Visitor(models.Model):
     is_lead = models.BooleanField(default=False)
     lead_created_at = models.DateTimeField(null=True, blank=True)
 
+    # ── Enrichment fields ────────────────────────────────────────────
+    is_enriched = models.BooleanField(default=False, db_index=True)
+
+    # Geo
+    country = models.CharField(max_length=100, blank=True)
+    country_code = models.CharField(max_length=4, blank=True)
+    region = models.CharField(max_length=100, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+
+    # Company / ISP
+    company_name = models.CharField(max_length=255, blank=True, db_index=True)
+    company_domain = models.CharField(max_length=255, blank=True)
+    company_industry = models.CharField(max_length=255, blank=True)
+    company_size = models.CharField(max_length=50, blank=True)
+    isp = models.CharField(max_length=255, blank=True)
+
     class Meta:
         ordering = ["-last_seen"]
 
     def __str__(self):
-        return f"Visitor {self.session_id[:8]} ({self.ip_address or 'unknown IP'})"
+        label = self.company_name or self.ip_address or "unknown"
+        return f"Visitor {self.session_id[:8]} ({label})"
 
 
 class PageView(models.Model):

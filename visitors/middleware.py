@@ -14,8 +14,8 @@ EXCLUDED_PREFIXES = ("/admin", "/static")
 class VisitorTrackingMiddleware(MiddlewareMixin):
     """
     Ensures every browser session hitting the API has a Visitor record,
-    keeping IP / device / browser info current. Cheap: one upsert per request,
-    skipped for admin and static asset paths.
+    keeping IP / device / browser info current. On first visit, triggers
+    async enrichment (geo + company lookup) without blocking the request.
     """
 
     def process_request(self, request):
@@ -48,8 +48,19 @@ class VisitorTrackingMiddleware(MiddlewareMixin):
             else:
                 visitor.request_count = 1
                 visitor.save(update_fields=["request_count"])
-        except Exception as exc:  # never let tracking break the actual request
+                # Fire async enrichment only for brand-new visitors
+                _trigger_enrichment(visitor)
+
+        except Exception as exc:
             logger.error("Visitor tracking failed: %s", exc)
             visitor = None
 
         request.visitor = visitor
+
+
+def _trigger_enrichment(visitor):
+    try:
+        from enrichment.services import enrich_visitor_async
+        enrich_visitor_async(visitor)
+    except Exception as exc:
+        logger.warning("Could not trigger enrichment: %s", exc)

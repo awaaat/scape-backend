@@ -14,12 +14,23 @@ else:
     raise RuntimeError("No .env file found. Please create one.")
 
 # ─── Django core ──────────────────────────────────────────────────────
-SECRET_KEY = env("SECRET_KEY", default="dev-only-insecure-key-change-me")
+SECRET_KEY = env("SECRET_KEY")  # no default — must be set in .env
 DEBUG = env.bool("DEBUG", default=False)
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
-CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
-
-# ─── Installed apps ──────────────────────────────────────────────────
+ALLOWED_HOSTS = env.list(
+    "ALLOWED_HOSTS",
+    default=["localhost", "127.0.0.1", ".scapedatasolutions.com"],
+)
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://scapedatasolutions.com",
+        "https://www.scapedatasolutions.com",
+    ],
+)
+# ── Add "enrichment" to INSTALLED_APPS ─────────────────────────────
+# In backend/settings.py, update INSTALLED_APPS to:
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -31,7 +42,9 @@ INSTALLED_APPS = [
     "corsheaders",
     "visitors",
     "leads",
+    "enrichment",         
 ]
+
 
 # ─── Middleware ──────────────────────────────────────────────────────
 MIDDLEWARE = [
@@ -76,7 +89,7 @@ DATABASES = {
         "PASSWORD": env("DB_PASSWORD", default=""),
         "HOST": env("DB_HOST", default="localhost"),
         "PORT": env("DB_PORT", default="5432"),
-        "CONN_MAX_AGE": 60,
+        "CONN_MAX_AGE": 600,  # increased from 60 for production
         "OPTIONS": {"sslmode": "require"},
     }
 }
@@ -107,6 +120,7 @@ STORAGES = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ─── CORS – only your real frontend origins ─────────────────────────
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = env.list(
     "FRONTEND_ORIGINS",
     default=["http://localhost:5173", "http://localhost:3000"],
@@ -163,13 +177,15 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
 
 # ─── Logging ────────────────────────────────────────────────────────
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {"format": "{levelname} {asctime} {module} {message}", "style": "{"},
+        "verbose": {"format": "{levelname} {asctime} {name} {message}", "style": "{"},
     },
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
