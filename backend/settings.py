@@ -6,15 +6,17 @@ import environ
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ─── Load environment variables ──────────────────────────────────────
+# Locally: reads from a .env file in the project root (gitignored).
+# On Render (and any platform that injects env vars directly): no .env
+# file exists on disk — that's expected, not an error. environ.Env()
+# still reads from the real process environment either way.
 env = environ.Env()
 env_file = BASE_DIR / ".env"
 if env_file.exists():
     environ.Env.read_env(str(env_file))
-else:
-    raise RuntimeError("No .env file found. Please create one.")
 
 # ─── Django core ──────────────────────────────────────────────────────
-SECRET_KEY = env("SECRET_KEY")  # no default — must be set in .env
+SECRET_KEY = env("SECRET_KEY")  # no default — must be set, locally or on Render
 DEBUG = env.bool("DEBUG", default=False)
 ALLOWED_HOSTS = env.list(
     "ALLOWED_HOSTS",
@@ -29,8 +31,7 @@ CSRF_TRUSTED_ORIGINS = env.list(
         "https://www.scapedatasolutions.com",
     ],
 )
-# ── Add "enrichment" to INSTALLED_APPS ─────────────────────────────
-# In backend/settings.py, update INSTALLED_APPS to:
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -42,9 +43,8 @@ INSTALLED_APPS = [
     "corsheaders",
     "visitors",
     "leads",
-    "enrichment",         
+    "enrichment",
 ]
-
 
 # ─── Middleware ──────────────────────────────────────────────────────
 MIDDLEWARE = [
@@ -89,7 +89,7 @@ DATABASES = {
         "PASSWORD": env("DB_PASSWORD", default=""),
         "HOST": env("DB_HOST", default="localhost"),
         "PORT": env("DB_PORT", default="5432"),
-        "CONN_MAX_AGE": 600,  # increased from 60 for production
+        "CONN_MAX_AGE": 600,
         "OPTIONS": {"sslmode": "require"},
     }
 }
@@ -194,5 +194,6 @@ LOGGING = {
     "loggers": {
         "visitors": {"level": "INFO", "propagate": True},
         "leads": {"level": "INFO", "propagate": True},
+        "enrichment": {"level": "INFO", "propagate": True},
     },
 }
