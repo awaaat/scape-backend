@@ -1,7 +1,7 @@
+import base64
 import logging
 import os
 import threading
-from email.mime.image import MIMEImage
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
@@ -13,10 +13,15 @@ logger = logging.getLogger("leads")
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "templates", "email", "logo_email.png")
 
 
-def _send_html_email(subject, template_name, context, to_emails, from_email=None, reply_to=None, inline_images=None):
+def _get_logo_data_uri():
+    with open(LOGO_PATH, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
+
+
+def _send_html_email(subject, template_name, context, to_emails, from_email=None, reply_to=None):
     html_body = render_to_string(template_name, context)
     text_body = strip_tags(html_body)
-
     msg = EmailMultiAlternatives(
         subject=subject,
         body=text_body,
@@ -24,17 +29,7 @@ def _send_html_email(subject, template_name, context, to_emails, from_email=None
         to=to_emails,
         reply_to=reply_to or None,
     )
-    msg.mixed_subtype = "related"
     msg.attach_alternative(html_body, "text/html")
-
-    if inline_images:
-        for cid, path in inline_images.items():
-            with open(path, "rb") as f:
-                img = MIMEImage(f.read())
-            img.add_header("Content-ID", f"<{cid}>")
-            img.add_header("Content-Disposition", "inline", filename=os.path.basename(path))
-            msg.attach(img)
-
     msg.send(fail_silently=False)
 
 
@@ -51,6 +46,7 @@ def send_user_welcome(lead):
         "lead": lead,
         "site": settings.SITE_DOMAIN,
         "surname": surname,
+        "logo_data_uri": _get_logo_data_uri(),
     }
 
     def _send():
@@ -62,7 +58,6 @@ def send_user_welcome(lead):
                 to_emails=[lead.email],
                 from_email=settings.WELCOME_FROM_EMAIL,
                 reply_to=[settings.REPLY_TO_EMAIL],
-                inline_images={"logo_email": LOGO_PATH},
             )
             logger.info("Welcome email sent to %s", lead.email)
         except Exception as exc:
