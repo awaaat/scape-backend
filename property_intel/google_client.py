@@ -716,32 +716,59 @@ def fetch_road_context(cell: LocationCell):
     return cell
 
 
+GENERIC_ROAD_NAMES = {"unnamed road"}
+
+
 def _resolve_road_name(place_id, cell):
     """Roads API's nearestRoads gives a placeId for the snapped segment but
     no human-readable name -- one extra Places (New) Details call turns
-    that into an actual road name (e.g. 'Kiganjo Road', 'Thika Road')."""
-    if not place_id:
-        return None
-    headers = {
-        "X-Goog-Api-Key": GOOGLE_API_KEY,
-        "X-Goog-FieldMask": "displayName",
-    }
-    try:
-        resp = requests.get(
-            f"https://places.googleapis.com/v1/places/{place_id}",
-            headers=headers, timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-        succeeded = resp.status_code == 200
-        data = resp.json() if succeeded else {}
-    except (requests.RequestException, ValueError) as exc:
-        logger.warning("Road name lookup failed for cell %s: %s", cell.geohash, exc)
-        _log_call("road_name", cell, {"place_id": place_id}, None, False)
-        return None
+    that into an actual road name (e.g. 'Kiganjo Road', 'Thika Road').
+    Google itself labels many private/estate access lanes 'Unnamed Road' --
+    when that happens, fall back to the 'route' component already sitting
+    in this cell's geocode response (free, no extra API call) instead of
+    showing that placeholder to a buyer."""
+    name = None
+    if place_id:
+        headers = {
+            "X-Goog-Api-Key": GOOGLE_API_KEY,
+            "X-Goog-FieldMask": "displayName",
+        }
+        try:
+            resp = requests.get(
+                f"https://places.googleapis.com/v1/places/{place_id}",
+                headers=headers, timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            succeeded = resp.status_code == 200
+            data = resp.json() if succeeded else {}
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning("Road name lookup failed for cell %s: %s", cell.geohash, exc)
+            _log_call("road_name", cell, {"place_id": place_id}, None, False)
+            succeeded = False
+            data = {}
+        else:
+            _log_call("road_name", cell, {"place_id": place_id}, resp.status_code, succeeded)
 
-    _log_call("road_name", cell, {"place_id": place_id}, resp.status_code, succeeded)
-    if not succeeded:
-        return None
-    return data.get("displayName", {}).get("text")
+        if succeeded:
+            name = data.get("displayName", {}).get("text")
+
+    if name and name.strip().lower() not in GENERIC_ROAD_NAMES:
+        return name
+
+    return _nearest_named_route_from_geocode(cell)
+
+
+def _nearest_named_route_from_geocode(cell):
+    """Pulls a 'route' (road) address component out of the geocode response
+    already fetched for this cell -- a free fallback for when the exact
+    snapped road segment has no formal name in Google's data."""
+    raw = getattr(cell, "geocode_raw_response", None) or {}
+    for result in raw.get("results", []):
+        for comp in result.get("address_components", []):
+            if "route" in comp.get("types", []):
+                candidate = comp.get("long_name")
+                if candidate and candidate.strip().lower() not in GENERIC_ROAD_NAMES:
+                    return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
