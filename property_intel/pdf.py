@@ -54,6 +54,21 @@ PRICE_BENCHMARKS = {
 }
 
 
+KENYA_CITY_NAMES = {"NAIROBI", "MOMBASA", "KISUMU", "NAKURU"}
+
+
+def _town_or_city_label(name):
+    """Kenya has four chartered cities (Nairobi, Mombasa, Kisumu, Nakuru);
+    every other settlement in kenya_towns_final.csv is a town. Normalizes
+    names like 'NAIROBI CITY' and appends the correct suffix so the report
+    never states a bare place name."""
+    if not name:
+        return name
+    base = name.upper().replace(" CITY", "").strip()
+    suffix = "City" if base in KENYA_CITY_NAMES else "Town"
+    return f"{base.title()} {suffix}"
+
+
 class ReportRenderError(Exception):
     """Raised on unrecoverable rendering failure -- caller treats this as a
     failed report, never a partial/corrupt one."""
@@ -108,7 +123,7 @@ def _nearest_town_summary(cell):
     nearest = towns[0]
     minutes = round(nearest["drive_duration_s"] / 60) if nearest.get("drive_duration_s") else None
     km = round(nearest["distance_m"] / 1000, 1) if nearest.get("distance_m") is not None else None
-    return nearest["name"].title(), minutes, km
+    return _town_or_city_label(nearest["name"]), minutes, km
 
 
 def _display_location_name(pin, cell):
@@ -117,7 +132,7 @@ def _display_location_name(pin, cell):
         return address
     town, _ = _match_price_benchmark(cell)
     if town:
-        return f"Near {town.title()}, Kenya"
+        return f"Near {_town_or_city_label(town)}, Kenya"
     return f"{pin.latitude}, {pin.longitude}"
 
 
@@ -240,7 +255,7 @@ def _summary_text(pin, cell, investment_score, accessibility_score):
 
     town, benchmark = _match_price_benchmark(cell)
     if benchmark and benchmark.get("yoy_change_pct") is not None:
-        bullets.append(f"{town.title()} land values rose {benchmark['yoy_change_pct']}% over the past year.")
+        bullets.append(f"{_town_or_city_label(town)} land values rose {benchmark['yoy_change_pct']}% over the past year.")
 
     nairobi = (cell.travel_times or {}).get("nairobi_cbd")
     if nairobi and nairobi.get("duration_s"):
@@ -377,8 +392,14 @@ def _investment_contributors(cell, investment_score):
         reasons.append(("strength", f"{c5} {label.lower()} within 5 km"))
 
     if getattr(cell, "on_paved_road", None) is True:
-        road_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
-        reasons.append(("strength", f"On or near a mapped access road{road_bit}"))
+        road_name = getattr(cell, "nearest_road_name", None)
+        if road_name and cell.nearest_road_distance_m:
+            reasons.append(("strength", f"~{cell.nearest_road_distance_m}m from {road_name}"))
+        elif road_name:
+            reasons.append(("strength", f"On or near {road_name}"))
+        else:
+            road_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
+            reasons.append(("strength", f"On or near a mapped access road{road_bit}"))
     elif getattr(cell, "on_paved_road", None) is False:
         reasons.append(("watch", "No mapped road detected nearby -- verify physical access before buying"))
 
@@ -403,9 +424,9 @@ def _investment_contributors(cell, investment_score):
     if benchmark and benchmark.get("yoy_change_pct") is not None:
         yoy = benchmark["yoy_change_pct"]
         if yoy > 0:
-            reasons.append(("strength", f"{town.title()} land values rose {yoy}% in the past year"))
+            reasons.append(("strength", f"{_town_or_city_label(town)} land values rose {yoy}% in the past year"))
         elif yoy < 0:
-            reasons.append(("watch", f"{town.title()} land values fell {abs(yoy)}% in the past year"))
+            reasons.append(("watch", f"{_town_or_city_label(town)} land values fell {abs(yoy)}% in the past year"))
 
     nairobi = (cell.travel_times or {}).get("nairobi_cbd")
     if nairobi and nairobi.get("duration_s"):
@@ -753,7 +774,7 @@ def render_report_pdf(pin, cell):
                 price_bit = f"KES {mv_benchmark['price_per_acre_kes']:,.0f} per acre, "
             yoy = mv_benchmark.get("yoy_change_pct")
             direction = "up" if yoy is not None and yoy > 0 else "down" if yoy is not None and yoy < 0 else "flat"
-            mv_text = f"{mv_town.title()} land values: {price_bit}{direction} {abs(yoy):.1f}% year-over-year"
+            mv_text = f"{_town_or_city_label(mv_town)} land values: {price_bit}{direction} {abs(yoy):.1f}% year-over-year"
             if mv_benchmark.get("quarter"):
                 mv_text += f" ({mv_benchmark['quarter']})"
             mv_text += "."
@@ -822,7 +843,7 @@ def render_report_pdf(pin, cell):
         if steps_source:
             story.append(Spacer(1, 3 * mm))
             story.append(Paragraph(
-                f"<b>Driving from {steps_source['name'].title()}:</b>", styles['JustifiedNormal']
+                f"<b>Driving from {_town_or_city_label(steps_source['name'])}:</b>", styles['JustifiedNormal']
             ))
             step_items = [
                 ListItem(Paragraph(step, styles['TableCell']), leftIndent=4 * mm, spaceAfter=2)
@@ -927,7 +948,7 @@ def render_report_pdf(pin, cell):
                 mins = t.get("drive_duration_s")
                 drive_str = f"{round(mins / 60)} min" if mins else "Unknown"
                 town_data.append([
-                    Paragraph(t["name"].title(), styles['TableCell']),
+                    Paragraph(_town_or_city_label(t["name"]), styles['TableCell']),
                     Paragraph(t["county"].title(), styles['TableCell']),
                     Paragraph(dist_str, styles['TableCell']),
                     Paragraph(drive_str, styles['TableCell']),
@@ -989,8 +1010,13 @@ def render_report_pdf(pin, cell):
 
         if getattr(cell, "on_paved_road", None) is not None:
             if cell.on_paved_road:
-                road_bit = f" (~{cell.nearest_road_distance_m}m to nearest mapped road)" if cell.nearest_road_distance_m else ""
-                details.append(f"Road Access: On or near a mapped road{road_bit}")
+                road_name = getattr(cell, "nearest_road_name", None)
+                if road_name:
+                    dist_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
+                    details.append(f"Road Access: {road_name}{dist_bit}")
+                else:
+                    road_bit = f" (~{cell.nearest_road_distance_m}m to nearest mapped road)" if cell.nearest_road_distance_m else ""
+                    details.append(f"Road Access: On or near a mapped road{road_bit}")
             else:
                 details.append("Road Access: No mapped road detected nearby -- verify physical access before purchase")
         

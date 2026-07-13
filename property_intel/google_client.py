@@ -704,12 +704,44 @@ def fetch_road_context(cell: LocationCell):
         cell.nearest_road_distance_m = _haversine_m(
             float(cell.center_latitude), float(cell.center_longitude), snap_lat, snap_lng
         )
+        cell.nearest_road_name = _resolve_road_name(snapped[0].get("placeId"), cell)
     else:
         cell.nearest_road_distance_m = None
+        cell.nearest_road_name = None
 
     cell.road_context_fetched_at = timezone.now()
-    cell.save(update_fields=["on_paved_road", "nearest_road_distance_m", "road_context_fetched_at"])
+    cell.save(update_fields=[
+        "on_paved_road", "nearest_road_distance_m", "nearest_road_name", "road_context_fetched_at",
+    ])
     return cell
+
+
+def _resolve_road_name(place_id, cell):
+    """Roads API's nearestRoads gives a placeId for the snapped segment but
+    no human-readable name -- one extra Places (New) Details call turns
+    that into an actual road name (e.g. 'Kiganjo Road', 'Thika Road')."""
+    if not place_id:
+        return None
+    headers = {
+        "X-Goog-Api-Key": GOOGLE_API_KEY,
+        "X-Goog-FieldMask": "displayName",
+    }
+    try:
+        resp = requests.get(
+            f"https://places.googleapis.com/v1/places/{place_id}",
+            headers=headers, timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        succeeded = resp.status_code == 200
+        data = resp.json() if succeeded else {}
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Road name lookup failed for cell %s: %s", cell.geohash, exc)
+        _log_call("road_name", cell, {"place_id": place_id}, None, False)
+        return None
+
+    _log_call("road_name", cell, {"place_id": place_id}, resp.status_code, succeeded)
+    if not succeeded:
+        return None
+    return data.get("displayName", {}).get("text")
 
 
 # ---------------------------------------------------------------------------

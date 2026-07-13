@@ -153,6 +153,7 @@ class LocationCell(models.Model):
     # ── Road context (Roads API) ──────────────────────────────────────
     on_paved_road = models.BooleanField(null=True, blank=True)
     nearest_road_distance_m = models.PositiveIntegerField(null=True, blank=True)
+    nearest_road_name = models.CharField(max_length=255, null=True, blank=True)
     road_context_fetched_at = models.DateTimeField(null=True, blank=True)
 
     # ── Travel times (Routes API) ─────────────────────────────────────
