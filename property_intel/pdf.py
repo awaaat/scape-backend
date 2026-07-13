@@ -7,6 +7,7 @@ No vague claims. No generic "educational institutions" - we list them by name.
 """
 import io
 import logging
+import math
 import re
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from reportlab.platypus import (
     Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
     ListFlowable, ListItem,
 )
-from reportlab.graphics.shapes import Drawing, Rect
+from reportlab.graphics.shapes import Drawing, Polygon
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 
 logger = logging.getLogger("property_intel")
@@ -473,14 +474,33 @@ def _category_stars(cell, investment_score):
     ]
 
 
-def _stars_drawing(filled, total=5, box=9, gap=2.5):
-    """Small colored-square rating bar -- avoids relying on Unicode star
-    glyphs, which base-14 PDF fonts can't reliably render."""
+def _star_points(cx, cy, outer_r, inner_r):
+    """Vertex coordinates for a 5-pointed star centered at (cx, cy),
+    computed geometrically -- no font/glyph dependency at all."""
+    points = []
+    for i in range(10):
+        angle = math.pi / 2 + i * math.pi / 5
+        r = outer_r if i % 2 == 0 else inner_r
+        points.append(cx + r * math.cos(angle))
+        points.append(cy + r * math.sin(angle))
+    return points
+
+
+def _stars_drawing(filled, total=5, box=11, gap=3):
+    """Real 5-pointed star rating bar, drawn as vector shapes -- avoids
+    relying on Unicode star glyphs, which base-14 PDF fonts can't
+    reliably render."""
+    outer_r = box / 2
+    inner_r = outer_r * 0.382
     d = Drawing(total * (box + gap), box)
     for i in range(total):
-        x = i * (box + gap)
+        cx = i * (box + gap) + outer_r
+        cy = outer_r
         color = colors.HexColor('#f2a900') if i < filled else colors.HexColor('#e3e3e3')
-        d.add(Rect(x, 0, box, box, fillColor=color, strokeColor=None))
+        d.add(Polygon(
+            _star_points(cx, cy, outer_r, inner_r),
+            fillColor=color, strokeColor=None,
+        ))
     return d
 
 
