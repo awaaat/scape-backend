@@ -416,6 +416,7 @@ class PropertyReport(models.Model):
         ("generating", "Generating"),
         ("ready", "Ready"),
         ("failed", "Failed"),
+        ("cancelled", "Cancelled"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

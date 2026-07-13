@@ -387,3 +387,54 @@ class UsageView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ReportRetryView(APIView):
+    """POST /api/property/reports/<id>/retry/ — user-triggered retry for a
+    failed report. No new charge: the broker already paid (or used a free
+    slot) for the original attempt."""
+
+    def post(self, request, report_id):
+        report = get_object_or_404(PropertyReport.objects.select_related("pin__broker__user"), pk=report_id)
+
+        user = getattr(request, "user", None)
+        if report.pin.broker.user_id and user is not None and user.is_authenticated and report.pin.broker.user_id != user.pk:
+            return Response({"error": "This report does not belong to you."}, status=status.HTTP_403_FORBIDDEN)
+
+        if report.status != "failed":
+            return Response(
+                {"error": f"Only a failed report can be retried (current status: {report.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        PropertyReport.objects.filter(pk=report_id).update(status="pending", failure_reason="")
+        generate_report_task.delay(str(report.id))
+        report.refresh_from_db()
+        return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
+
+
+class ReportCancelView(APIView):
+    """POST /api/property/reports/<id>/cancel/ — cancel a pending/generating
+    report. Credits one free report back immediately."""
+
+    def post(self, request, report_id):
+        report = get_object_or_404(
+            PropertyReport.objects.select_related("pin__broker__user", "pin__broker__device_fingerprint"),
+            pk=report_id,
+        )
+
+        user = getattr(request, "user", None)
+        if report.pin.broker.user_id and user is not None and user.is_authenticated and report.pin.broker.user_id != user.pk:
+            return Response({"error": "This report does not belong to you."}, status=status.HTTP_403_FORBIDDEN)
+
+        if report.status not in ("pending", "generating"):
+            return Response(
+                {"error": f"Only a pending or generating report can be cancelled (current status: {report.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .tasks import _credit_back_report
+        PropertyReport.objects.filter(pk=report_id).update(status="cancelled")
+        _credit_back_report(report, reason="user cancelled")
+        report.refresh_from_db()
+        return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)

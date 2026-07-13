@@ -11,7 +11,7 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
 from . import storage
@@ -22,6 +22,24 @@ from .services import needs_enrichment
 from .storage import StorageUploadFailed
 
 logger = logging.getLogger("property_intel")
+
+def _credit_back_report(report, reason=""):
+    """
+    Whether a report was free-tier or paid, a permanent failure/cancellation
+    means the broker got nothing for what they spent. Crediting one
+    free_reports_remaining back to their device is the refund — same value
+    as the report itself, no separate payment-refund flow needed.
+    """
+    from .models import DeviceFingerprint
+    fingerprint_id = report.pin.broker.device_fingerprint_id
+    if not fingerprint_id:
+        logger.warning("Report %s: no device_fingerprint to credit — broker %s", report.id, report.pin.broker_id)
+        return
+    DeviceFingerprint.objects.filter(pk=fingerprint_id).update(
+        free_reports_remaining=models.F("free_reports_remaining") + 1
+    )
+    logger.info("Report %s: credited 1 free report back to device %s (%s)", report.id, fingerprint_id, reason)
+
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 30
@@ -52,6 +70,10 @@ def generate_report_task(self, report_id):
         logger.info("Report %s already ready — skipping duplicate task run.", report_id)
         return
 
+    if report.status == "cancelled":
+        logger.info("Report %s was cancelled — skipping.", report_id)
+        return
+
     PropertyReport.objects.filter(pk=report_id).update(status="generating")
     cell = report.pin.location_cell
 
@@ -61,6 +83,11 @@ def generate_report_task(self, report_id):
             if failures:
                 logger.info("Report %s: enrichment had partial failures: %s", report_id, failures)
             cell.refresh_from_db()
+
+        report.refresh_from_db(fields=["status"])
+        if report.status == "cancelled":
+            logger.info("Report %s cancelled mid-generation — stopping before render.", report_id)
+            return
 
         pdf_bytes, investment_score, accessibility_score, summary_text = render_report_pdf(report.pin, cell)
 
@@ -82,6 +109,7 @@ def generate_report_task(self, report_id):
         # data, so this fails immediately rather than burning 3 retries.
         logger.error("Report %s: unrecoverable render failure: %s", report_id, exc)
         PropertyReport.objects.filter(pk=report_id).update(status="failed", failure_reason=str(exc)[:2000])
+        _credit_back_report(report, reason="unrecoverable render failure")
 
     except StorageUploadFailed as exc:
         logger.warning("Report %s: storage upload failed (attempt %s/%s): %s", report_id, self.request.retries + 1, MAX_RETRIES, exc)
@@ -96,7 +124,9 @@ def _retry_or_fail(task, report_id, exc):
     try:
         raise task.retry(exc=exc)
     except task.MaxRetriesExceededError:
+        report = PropertyReport.objects.select_related("pin__broker").get(pk=report_id)
         PropertyReport.objects.filter(pk=report_id).update(status="failed", failure_reason=str(exc)[:2000])
+        _credit_back_report(report, reason=f"exhausted {MAX_RETRIES} retries")
         logger.error("Report %s permanently failed after %s retries: %s", report_id, MAX_RETRIES, exc)
 
 
