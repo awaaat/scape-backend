@@ -15,6 +15,4 @@ class PaymentsConfig(AppConfig):
     default = True
 
     def ready(self):
-        # No signal receivers to wire up here — this app only ever SENDS
-        # payment_succeeded, it never receives anything. Nothing to import.
-        pass
+        from . import wallet_signals  # noqa: F401 -- registers credit_user_wallet + relay_wallet_topup

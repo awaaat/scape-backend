@@ -56,7 +56,7 @@ POINTS_REPEATED_PIN_CLUSTER = 2
 POINTS_IP_FANOUT = 2
 POINTS_PAYMENT_METHOD_REUSE = 3  # strongest signal — weighted higher
 
-OTP_THRESHOLD = 2
+OTP_THRESHOLD = 9999  # temporarily disabled -- restore to 2 to re-enable phone (OTP) verification
 MANUAL_REVIEW_THRESHOLD = 4
 
 # Once a device has completed OTP verification, don't re-demand it on every

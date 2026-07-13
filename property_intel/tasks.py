@@ -25,11 +25,30 @@ logger = logging.getLogger("property_intel")
 
 def _credit_back_report(report, reason=""):
     """
-    Whether a report was free-tier or paid, a permanent failure/cancellation
-    means the broker got nothing for what they spent. Crediting one
-    free_reports_remaining back to their device is the refund — same value
-    as the report itself, no separate payment-refund flow needed.
+    A permanent failure/cancellation means the broker got nothing for what
+    they spent — but "what they spent" differs by report type:
+
+      - Paid report (is_paid=True): real KES was spent via wallet/Paystack.
+        Crediting a free_reports_remaining slot would refund the wrong
+        currency entirely — price_charged_kes goes back into the wallet
+        balance instead.
+      - Free-tier report: one free_reports_remaining slot back to the
+        device is the correct, like-for-like refund.
+      - Paid-tier report cancelled before payment ever landed (still
+        awaiting_payment): nothing was charged, nothing was consumed —
+        nothing to credit back.
     """
+    if report.is_paid and report.price_charged_kes:
+        _refund_wallet(report, reason=reason)
+        return
+
+    if not report.is_free_tier:
+        logger.info(
+            "Report %s: no charge landed and no free slot was consumed — nothing to credit (%s)",
+            report.id, reason,
+        )
+        return
+
     from .models import DeviceFingerprint
     fingerprint_id = report.pin.broker.device_fingerprint_id
     if not fingerprint_id:
@@ -39,6 +58,47 @@ def _credit_back_report(report, reason=""):
         free_reports_remaining=models.F("free_reports_remaining") + 1
     )
     logger.info("Report %s: credited 1 free report back to device %s (%s)", report.id, fingerprint_id, reason)
+
+
+def _refund_wallet(report, reason=""):
+    """
+    Credit price_charged_kes back to the broker's wallet balance — this is
+    what actually populates 'My Balance' on the Dashboard. No-op (with a
+    warning, not a silent swallow) if the broker has no linked dashboard
+    user, since there's no wallet to refund into.
+    """
+    user_id = report.pin.broker.user_id
+    if not user_id:
+        logger.warning(
+            "Report %s: paid report has no linked user — cannot refund KES %s to wallet (broker %s)",
+            report.id, report.price_charged_kes, report.pin.broker_id,
+        )
+        return
+
+    from django.contrib.auth import get_user_model
+    from payments.models import UserWallet, WalletTransaction
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning("Report %s: linked user %s no longer exists — cannot refund wallet", report.id, user_id)
+        return
+
+    wallet = UserWallet.get_or_create_for_user(user)
+    wallet.credit(report.price_charged_kes)
+    WalletTransaction.objects.create(
+        wallet=wallet,
+        transaction_type="refund",
+        amount=report.price_charged_kes,
+        balance_after=wallet.balance,
+        reference=str(report.id),
+        note=f"Refund for report {report.id} ({reason})",
+    )
+    logger.info(
+        "Report %s: refunded KES %s to wallet for user %s (%s)",
+        report.id, report.price_charged_kes, user_id, reason,
+    )
 
 
 MAX_RETRIES = 3

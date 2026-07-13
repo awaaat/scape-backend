@@ -127,6 +127,20 @@ def _nearest_town_summary(cell):
     return _town_or_city_label(nearest["name"]), minutes, km
 
 
+def _nearest_city_summary(cell):
+    """
+    Drive time to the nearest resolved town/city, period -- no longer
+    restricted to Kenya's four chartered cities (Nairobi, Mombasa, Kisumu,
+    Nakuru). A plot's nearest useful landmark is often a smaller county
+    town, and that's still worth surfacing; requiring a chartered city
+    meant plots nowhere near one of those four got no nearby-place bullet
+    at all. Delegates to _nearest_town_summary(), which already resolves
+    the nearest entry in cell.nearest_towns unfiltered.
+    Returns (label, minutes|None, km) or None if no towns were resolved.
+    """
+    return _nearest_town_summary(cell)
+
+
 def _display_location_name(pin, cell):
     address = cell.formatted_address or ""
     if address and not PLUS_CODE_RE.match(address):
@@ -258,11 +272,13 @@ def _summary_text(pin, cell, investment_score, accessibility_score):
     if benchmark and benchmark.get("yoy_change_pct") is not None:
         bullets.append(f"{_town_or_city_label(town)} land values rose {benchmark['yoy_change_pct']}% over the past year.")
 
-    nairobi = (cell.travel_times or {}).get("nairobi_cbd")
-    if nairobi and nairobi.get("duration_s"):
-        minutes = round(nairobi["duration_s"] / 60)
-        transit_bit = ", with public transit access" if nairobi.get("has_transit") else ""
-        bullets.append(f"Nairobi CBD is a {minutes}-minute drive away{transit_bit}.")
+    nearest_city = _nearest_city_summary(cell)
+    if nearest_city:
+        city_label, minutes, km = nearest_city
+        if minutes is not None:
+            bullets.append(f"{city_label} is a {minutes}-minute drive away.")
+        elif km is not None:
+            bullets.append(f"{city_label} is approximately {km} km away.")
 
     schools = _get_named_amenities_text(cell, "schools", "Schools", max_names=2, include_distance=False)
     if schools:
@@ -1028,11 +1044,6 @@ def render_report_pdf(pin, cell):
         if cell.air_quality_category:
             details.append(f"Air Quality: {cell.air_quality_category} (AQI {cell.air_quality_index})")
 
-        nairobi_travel = (cell.travel_times or {}).get("nairobi_cbd")
-        if nairobi_travel and nairobi_travel.get("duration_s"):
-            mins = round(nairobi_travel["duration_s"] / 60)
-            details.append(f"Drive Time to Nairobi CBD: {mins} minutes")
-        
         if getattr(cell, "elevation_meters", None) is not None:
             details.append(f"Elevation: {cell.elevation_meters:.0f}m above sea level")
 

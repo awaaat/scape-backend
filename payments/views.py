@@ -13,6 +13,8 @@ raw request bytes before anything parses/re-serializes them.
 """
 import json
 import logging
+import uuid
+from decimal import Decimal, InvalidOperation
 
 from django.http import JsonResponse
 from django.utils.decorators import method_decorator
@@ -26,6 +28,7 @@ from rest_framework.views import APIView
 from . import paystack, services
 from .models import PaystackTransaction, UserWallet
 from .serializers import InitializeTransactionSerializer, PaystackTransactionSerializer, WalletSerializer
+from .wallet_signals import WALLET_TOPUP_PURPOSE
 
 logger = logging.getLogger("payments")
 
@@ -164,3 +167,40 @@ class WalletView(APIView):
     def get(self, request):
         wallet = UserWallet.get_or_create_for_user(request.user)
         return Response(WalletSerializer(wallet).data, status=status.HTTP_200_OK)
+
+
+class WalletTopUpView(APIView):
+    """
+    POST /api/payments/wallet/topup/ — starts a Paystack checkout to add
+    funds to the logged-in user's wallet balance, completely independent
+    of buying any specific report. On confirmation, wallet_signals.py's
+    relay_wallet_topup receiver credits UserWallet.balance.
+
+    Body: { "amount": "500.00" }
+    Returns: same shape as InitializeTransactionView (includes checkout_url).
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_scope = "payments_initialize"
+
+    def post(self, request):
+        try:
+            amount = Decimal(str(request.data.get("amount")))
+        except (InvalidOperation, TypeError):
+            return Response({"error": "A valid amount is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= 0:
+            return Response({"error": "Amount must be greater than zero."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            txn = services.initialize_transaction(
+                email=request.user.email,
+                amount=amount,
+                currency="KES",
+                purpose=WALLET_TOPUP_PURPOSE,
+                external_reference=f"topup-{request.user.pk}-{uuid.uuid4().hex[:12]}",
+                callback_url=request.data.get("callback_url", ""),
+                metadata={"user_id": request.user.pk},
+            )
+        except services.PaymentInitializationError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        return Response(PaystackTransactionSerializer(txn).data, status=status.HTTP_201_CREATED)

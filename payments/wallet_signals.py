@@ -6,11 +6,28 @@ Zero knowledge of property_intel — pure payments-layer concern.
 import logging
 from django.contrib.auth import get_user_model
 from django.dispatch import receiver
-from .signals import wallet_topup_succeeded
+from .signals import payment_succeeded, wallet_topup_succeeded
 from .models import UserWallet, WalletTransaction
 
 logger = logging.getLogger("payments")
 User = get_user_model()
+
+WALLET_TOPUP_PURPOSE = "wallet_topup"
+
+
+@receiver(payment_succeeded)
+def relay_wallet_topup(sender, reference, purpose, external_reference, amount, currency, email, **kwargs):
+    """
+    Bridges the generic payment_succeeded signal to wallet_topup_succeeded
+    for wallet-topup purchases specifically -- this is what makes
+    WalletTopUpView (payments/views.py) actually land in the balance once
+    Paystack confirms the charge.
+    """
+    if purpose != WALLET_TOPUP_PURPOSE:
+        return
+    wallet_topup_succeeded.send(
+        sender=sender, user_email=email, amount=amount, currency=currency, reference=reference,
+    )
 
 
 @receiver(wallet_topup_succeeded)

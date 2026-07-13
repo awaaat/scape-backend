@@ -1,6 +1,9 @@
 from django.urls import path
 
-from .views import InitializeTransactionView, PaymentHistoryView, PaystackWebhookView, VerifyTransactionView, WalletView
+from .views import (
+    InitializeTransactionView, PaymentHistoryView, PaystackWebhookView,
+    VerifyTransactionView, WalletTopUpView, WalletView,
+)
 
 urlpatterns = [
     path("payments/initialize/", InitializeTransactionView.as_view(), name="payments-initialize"),
@@ -8,4 +11,5 @@ urlpatterns = [
     path("payments/verify/<str:reference>/", VerifyTransactionView.as_view(), name="payments-verify"),
     path("payments/history/", PaymentHistoryView.as_view(), name="payments-history"),
     path("payments/wallet/", WalletView.as_view(), name="payments-wallet"),
+    path("payments/wallet/topup/", WalletTopUpView.as_view(), name="payments-wallet-topup"),
 ]

@@ -24,6 +24,7 @@ import logging
 from django.conf import settings
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -83,6 +84,38 @@ def _initiate_report_payment(report):
 
     PropertyReport.objects.filter(pk=report.pk).update(paystack_reference=txn.reference)
     return txn.authorization_url, None
+
+
+def _try_pay_from_wallet(user_id, *, report_price):
+    """
+    'Auto-detect balance': before bouncing a logged-in broker to a fresh
+    Paystack checkout, see if their wallet already covers this report.
+    Returns True (and leaves a report_debit WalletTransaction behind) on
+    success; returns False with zero side effects if there's no linked
+    user, no wallet, or insufficient balance.
+    """
+    from django.contrib.auth import get_user_model
+    from payments.models import UserWallet, WalletTransaction
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return False
+
+    wallet = UserWallet.get_or_create_for_user(user)
+    if not wallet.debit(report_price):
+        return False
+
+    WalletTransaction.objects.create(
+        wallet=wallet,
+        transaction_type="report_debit",
+        amount=report_price,
+        balance_after=wallet.balance,
+        reference="",
+        note="Report paid from wallet balance (auto-detected at submission)",
+    )
+    return True
 
 
 def _client_ip(request):
@@ -163,11 +196,24 @@ class PinSubmitView(APIView):
             generate_report_task.delay(str(report.id))
             return Response(PropertyReportSerializer(report).data, status=status.HTTP_201_CREATED)
 
-        # Free tier exhausted — start a Paystack checkout. The report sits
-        # in 'awaiting_payment' until payments/signals.py's receiver sees a
-        # payment_succeeded event for it (see property_intel/signals.py)
-        # and flips it to 'pending' + dispatches generation. Nothing here
-        # talks to Paystack directly — that's payments/services.py.
+        # Free tier exhausted — try the broker's wallet balance before
+        # falling back to a fresh Paystack checkout. Only brokers linked to
+        # a logged-in dashboard account have a wallet, so this is a clean
+        # no-op for anonymous submissions.
+        if broker.user_id and _try_pay_from_wallet(broker.user_id, report_price=PROPERTY_REPORT_PRICE_KES):
+            report = PropertyReport.objects.create(
+                pin=pin, status="pending", is_free_tier=False, is_paid=True, paid_at=timezone.now(),
+                price_charged_kes=PROPERTY_REPORT_PRICE_KES,
+            )
+            generate_report_task.delay(str(report.id))
+            return Response(PropertyReportSerializer(report).data, status=status.HTTP_201_CREATED)
+
+        # No wallet balance (or anonymous) — start a Paystack checkout. The
+        # report sits in 'awaiting_payment' until payments/signals.py's
+        # receiver sees a payment_succeeded event for it (see
+        # property_intel/signals.py) and flips it to 'pending' + dispatches
+        # generation. Nothing here talks to Paystack directly — that's
+        # payments/services.py.
         report = PropertyReport.objects.create(
             pin=pin, status="awaiting_payment", is_free_tier=False, price_charged_kes=PROPERTY_REPORT_PRICE_KES,
         )
