@@ -39,3 +39,11 @@ htmlcov/
 
 # Migrations cache
 **/__pycache__/
+*.pyc
+*.bak
+*.bak[0-9]
+*.bak_*
+tree.txt
+db.sqlite3
+staticfiles/
+media/

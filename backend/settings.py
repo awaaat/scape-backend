@@ -45,6 +45,11 @@ INSTALLED_APPS = [
     "visitors",
     "leads",
     "enrichment",
+    "jobs",
+    "property_intel",
+    "payments",
+    "users",
+    "rest_framework_simplejwt.token_blacklist",
 ]
 
 # ─── Middleware ──────────────────────────────────────────────────────
@@ -81,17 +86,17 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "backend.wsgi.application"
 
-# ─── Database – Supabase PostgreSQL (Session Pooler) ──────────────
+# ─── Database – local PostgreSQL (dev) ─────────────────────────────
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("DB_NAME", default="postgres"),
-        "USER": env("DB_USER", default="postgres"),
-        "PASSWORD": env("DB_PASSWORD", default=""),
-        "HOST": env("DB_HOST", default="localhost"),
+        "NAME": env("DB_NAME"),
+        "USER": env("DB_USER"),
+        "PASSWORD": env("DB_PASSWORD"),
+        "HOST": env("DB_HOST"),
         "PORT": env("DB_PORT", default="5432"),
-        "CONN_MAX_AGE": 600,
-        "OPTIONS": {"sslmode": "require"},
+        "CONN_MAX_AGE": 0,
+        "OPTIONS": {"sslmode": "require", "prepare_threshold": None},
     }
 }
 
@@ -118,6 +123,14 @@ STORAGES = {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
+
+# ─── Media files (resume uploads) ────────────────────────────────────
+# Local disk for now. NOTE: Render's filesystem is ephemeral — anything
+# written here is wiped on every deploy/restart unless a persistent
+# Disk add-on is attached to the service. Fine for local dev; revisit
+# before relying on this in production.
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -156,7 +169,9 @@ SITE_DOMAIN = env("SITE_DOMAIN", default="https://scapedatasolutions.com")
 
 # ─── DRF ────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
     "DEFAULT_RENDERER_CLASSES": (
         ["rest_framework.renderers.JSONRenderer"]
@@ -174,6 +189,9 @@ REST_FRAMEWORK = {
         "anon": "30/minute",
         "contact": "5/minute",
         "track": "60/minute",
+        "property_pin": "20/minute",
+        "property_otp": "5/minute",
+        "payments_initialize": "10/minute",
     },
 }
 
@@ -204,5 +222,70 @@ LOGGING = {
         "visitors": {"level": "INFO", "propagate": True},
         "leads": {"level": "INFO", "propagate": True},
         "enrichment": {"level": "INFO", "propagate": True},
+        "jobs": {"level": "INFO", "propagate": True},
     },
+}
+# ─── Gmail SMTP (resume attachments ONLY — separate from Brevo) ─────
+# Brevo remains EMAIL_BACKEND / DEFAULT for everything else (leads,
+# applicant confirmations). This is a standalone connection used only
+# in jobs/email.py to get resume files into a Gmail inbox directly.
+GMAIL_SMTP_USER = env("GMAIL_SMTP_USER", default="")
+GMAIL_SMTP_APP_PASSWORD = env("GMAIL_SMTP_APP_PASSWORD", default="")
+GMAIL_RESUME_RECIPIENT = env("GMAIL_RESUME_RECIPIENT", default="scapedatasolutions@gmail.com")
+
+
+# ─── Celery ─────────────────────────────────────────────────────────
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_BEAT_SCHEDULE = {
+    "sweep-stuck-property-reports": {
+        "task": "property_intel.tasks.sweep_stuck_reports",
+        "schedule": 300.0,
+    },
+}
+
+# ─── Paystack ───────────────────────────────────────────────────────
+PAYSTACK_SECRET_KEY = env("PAYSTACK_SECRET_KEY", default="")
+PAYSTACK_CALLBACK_URL = env("PAYSTACK_CALLBACK_URL", default="")
+PROPERTY_REPORT_PRICE_KES = env.int("PROPERTY_REPORT_PRICE_KES", default=300)
+
+# ─── Google Maps Platform ─────────────────────────────────────────────
+GOOGLE_MAPS_API_KEY = env("GOOGLE_MAPS_API_KEY", default="")
+
+# ─── Africa's Talking (SMS OTP) ────────────────────────────────────
+AFRICASTALKING_USERNAME = env("AFRICASTALKING_USERNAME", default="")
+AFRICASTALKING_API_KEY = env("AFRICASTALKING_API_KEY", default="")
+AFRICASTALKING_SENDER_ID = env("AFRICASTALKING_SENDER_ID", default="")
+
+# ─── Supabase Storage ───────────────────────────────────────────────
+SUPABASE_URL = env("SUPABASE_URL", default="")
+SUPABASE_SERVICE_KEY = env("SUPABASE_SERVICE_KEY", default="")
+SUPABASE_STORAGE_BUCKET = env("SUPABASE_STORAGE_BUCKET", default="property-intel")
+
+# ─── Users app ──────────────────────────────────────────────────────
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:5173")
+BREVO_VERIFICATION_TEMPLATE_ID = env.int("BREVO_VERIFICATION_TEMPLATE_ID", default=1)
+
+# ─── Resume parsing (jobs app) ──────────────────────────────────────
+ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
+
+# ─── Enrichment (Clearbit, optional) ─────────────────────────────────
+CLEARBIT_API_KEY = env("CLEARBIT_API_KEY", default="")
+
+# ─── Privacy policy version (jobs app) ────────────────────────────────
+PRIVACY_POLICY_VERSION = env("PRIVACY_POLICY_VERSION", default="1.0")
+
+# ─── JWT auth (users app login) ──────────────────────────────────────
+from datetime import timedelta  # noqa: E402
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
 }

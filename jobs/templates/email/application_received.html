@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Application received</title>
+</head>
+<body style="margin:0; padding:0; background-color:#eef1f6; font-family:Helvetica, Arial, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f6; padding:32px 16px;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#ffffff; box-shadow:0 6px 24px rgba(13,43,107,0.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#0d2b6b; padding:28px 40px;">
+            <a href="{{ site }}" style="text-decoration:none; display:inline-block;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td valign="middle">
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="line-height:1; padding-bottom:3px;">
+                          <span style="font-family:Helvetica, Arial, sans-serif; font-size:32px; font-weight:900; color:#ffffff; letter-spacing:2px;">SCAPE</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="line-height:1; padding-bottom:7px;">
+                          <span style="font-family:Helvetica, Arial, sans-serif; font-size:11px; font-weight:400; color:#aebcdc; letter-spacing:2px;">DATA </span><span style="font-family:Helvetica, Arial, sans-serif; font-size:11px; font-weight:700; color:#fdb840; letter-spacing:2px;">SOLUTIONS</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding-bottom:7px; font-size:0; line-height:0;">
+                          <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="height:1px; width:190px; background-color:#2d4a8a; font-size:0; line-height:0;">&nbsp;</td></tr></table>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="line-height:1;">
+                          <span style="font-family:Helvetica, Arial, sans-serif; font-size:9px; font-weight:400; color:#6a82b4; letter-spacing:4px;">DATA ARCHITECTS</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </a>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px 40px 8px;">
+            <p style="margin:0 0 4px; color:#9aa2b1; font-size:12px; letter-spacing:1px; text-transform:uppercase; font-family:Helvetica, Arial, sans-serif;">Application received</p>
+            <h1 style="margin:0 0 20px; color:#0d2b6b; font-size:23px; font-family:Helvetica, Arial, sans-serif;">Thanks for applying, {{ application.full_name }}.</h1>
+            <p style="margin:0 0 16px; color:#374151; font-size:15px; line-height:1.7; font-family:Helvetica, Arial, sans-serif;">
+              We've received your application for
+              <strong style="color:#0d2b6b;">{{ job.title }}</strong>
+              and your resume has been passed to our hiring team.
+            </p>
+            <p style="margin:0 0 28px; color:#374151; font-size:15px; line-height:1.7; font-family:Helvetica, Arial, sans-serif;">
+              We review every application carefully, which takes a little time. If your background is a match for this role, someone from our team will reach out directly. If you don't hear from us, it simply means we've decided to move forward with other candidates for this particular opening — we'd still love for you to apply to future roles that fit.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Role summary card -->
+        <tr>
+          <td style="padding:0 40px 32px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f6f8fc; border:1px solid #e7ebf3;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <p style="margin:0 0 4px; color:#9aa2b1; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; font-family:Helvetica, Arial, sans-serif;">You applied for</p>
+                  <p style="margin:0 0 6px; color:#0d2b6b; font-size:17px; font-weight:700; font-family:Helvetica, Arial, sans-serif;">{{ job.title }}</p>
+                  <p style="margin:0; color:#374151; font-size:13px; font-family:Helvetica, Arial, sans-serif;">{{ job.get_department_display }} &middot; {{ job.get_job_type_display }} &middot; {{ job.get_location_type_display }}{% if job.location %} &middot; {{ job.location }}{% endif %}</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- CTA -->
+        <tr>
+          <td align="center" style="padding:0 40px 40px;">
+            <table role="presentation" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="background-color:#fdb840;">
+                  <a href="{{ site }}" style="display:inline-block; padding:13px 30px; font-size:14px; font-weight:700; color:#0d2b6b; text-decoration:none; font-family:Helvetica, Arial, sans-serif;">Visit our website</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background-color:#f6f8fc; padding:24px 40px; border-top:1px solid #e7ebf3;">
+            <p style="margin:0 0 6px; color:#9aa2b1; font-size:12px; font-family:Helvetica, Arial, sans-serif;">&copy; {% now "Y" %} Scape Data Solutions. All rights reserved.</p>
+            <p style="margin:0; color:#9aa2b1; font-size:12px; font-family:Helvetica, Arial, sans-serif;">You're receiving this because you applied for a role at <a href="{{ site }}" style="color:#9aa2b1;">{{ site }}</a>.</p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

@@ -1,0 +1,389 @@
+"""
+property_intel/views.py
+
+Entry points for the broker-facing flow:
+
+  POST /api/property/pins/                submit a location, get a report
+                                           (or a "verify your phone" /
+                                           "free reports exhausted" signal)
+  POST /api/property/otp/request/         send an SMS OTP code
+  POST /api/property/otp/verify/          verify it and resume generation
+  GET  /api/property/reports/<id>/        poll report status
+
+Nothing here talks to Google or renders a PDF directly — that's
+tasks.generate_report_task, dispatched and never awaited. A request to
+this view always returns quickly regardless of how slow enrichment is.
+
+No payment processing lives in this app. When a device has exhausted its
+free reports, the report is created with status="awaiting_payment" and the
+response says so plainly — wiring an actual payment provider in is future
+scope, deliberately kept out of property_intel.
+"""
+import logging
+
+from django.conf import settings
+from django.db.models import Sum
+from django.shortcuts import get_object_or_404
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+# property_intel is allowed to depend on payments (it calls the public
+# services API to start a checkout) — the decoupling is one-directional.
+# payments must never import anything from property_intel; see
+# payments/models.py's docstring and property_intel/signals.py for the
+# other half of this (payments -> property_intel via a generic signal).
+from payments import services as payment_services
+
+from .fraud import MANUAL_REVIEW_THRESHOLD, compute_suspicion_score, is_disposable_email
+from .ip_intel import check_ip_intel
+from .models import Broker, DeviceFingerprint, PropertyReport
+from .otp import OTPError, request_otp, verify_otp
+from .serializers import (
+    OTPRequestSerializer,
+    OTPVerifySerializer,
+    PinSubmitSerializer,
+    PropertyReportSerializer,
+)
+from .services import LocationParseError, create_pin
+from .tasks import generate_report_task
+
+logger = logging.getLogger("property_intel")
+
+# What a paid report costs. A flat rate rather than anything dynamic for
+# now — revisit if/when reports get tiered.
+PROPERTY_REPORT_PRICE_KES = getattr(settings, "PROPERTY_REPORT_PRICE_KES", 250)
+
+REPORT_PAYMENT_PURPOSE = "property_report"
+
+
+def _initiate_report_payment(report):
+    """
+    Starts a Paystack checkout for a report sitting in 'awaiting_payment'.
+    Returns (authorization_url, error_message) — exactly one will be set.
+    A failure here (Paystack down, bad config) must never 500 the whole
+    pin-submission response; the report stays 'awaiting_payment' and the
+    broker sees an honest message instead of a stack trace.
+    """
+    broker = report.pin.broker
+    try:
+        txn = payment_services.initialize_transaction(
+            email=broker.email,
+            amount=PROPERTY_REPORT_PRICE_KES,
+            currency="KES",
+            purpose=REPORT_PAYMENT_PURPOSE,
+            external_reference=str(report.id),
+            callback_url=getattr(settings, "PAYSTACK_CALLBACK_URL", ""),
+            metadata={"report_id": str(report.id), "pin_id": str(report.pin_id)},
+        )
+    except payment_services.PaymentInitializationError as exc:
+        logger.error("Could not start payment for report %s: %s", report.id, exc)
+        return None, "Payment could not be started right now — please try again shortly."
+
+    PropertyReport.objects.filter(pk=report.pk).update(paystack_reference=txn.reference)
+    return txn.authorization_url, None
+
+
+def _client_ip(request):
+    """Respect a trusted reverse proxy's X-Forwarded-For; fall back to REMOTE_ADDR.
+    Same pattern used in jobs/serializers.py — kept consistent across the codebase."""
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
+
+
+class PinSubmitView(APIView):
+    """
+    The main entry point. One request in, one of four outcomes out:
+      - blocked device                          -> 403
+      - score crosses manual-review threshold   -> 202, held for a human
+      - score crosses OTP threshold              -> 200, requires_otp=True
+      - free report available                    -> 201, report queued
+      - free reports exhausted                   -> 402, no payment yet
+    """
+
+    throttle_scope = "property_pin"
+
+    def post(self, request):
+        serializer = PinSubmitSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+
+        ip = _client_ip(request)
+        fingerprint = self._resolve_fingerprint(data["fingerprint_hash"], ip)
+
+        if fingerprint.is_blocked:
+            return Response(
+                {
+                    "error": "This device has been blocked from generating reports. "
+                    "Contact support if you believe this is a mistake."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        broker = self._resolve_broker(request, data["email"], fingerprint, ip)
+
+        try:
+            pin, cell = create_pin(data["raw_input"], broker=broker)
+        except LocationParseError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        score, reasons = compute_suspicion_score(
+            device_fingerprint=fingerprint, broker=broker, email=data["email"], location_cell=cell,
+        )
+        logger.info("Pin %s scored %s: %s", pin.id, score, "; ".join(reasons) or "no signals")
+
+        if score >= MANUAL_REVIEW_THRESHOLD:
+            report = PropertyReport.objects.create(pin=pin, status="awaiting_review", is_free_tier=True)
+            return Response(
+                {
+                    "report_id": str(report.id),
+                    "status": report.status,
+                    "message": "This request needs a quick manual review before a report can be generated. We'll be in touch shortly.",
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        if fingerprint.requires_otp_verification:
+            report = PropertyReport.objects.create(pin=pin, status="pending", is_free_tier=True)
+            return Response(
+                {
+                    "report_id": str(report.id),
+                    "requires_otp": True,
+                    "message": "Please verify your phone number to continue — request a code, then confirm it.",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        if fingerprint.consume_free_report():
+            report = PropertyReport.objects.create(pin=pin, status="pending", is_free_tier=True)
+            generate_report_task.delay(str(report.id))
+            return Response(PropertyReportSerializer(report).data, status=status.HTTP_201_CREATED)
+
+        # Free tier exhausted — start a Paystack checkout. The report sits
+        # in 'awaiting_payment' until payments/signals.py's receiver sees a
+        # payment_succeeded event for it (see property_intel/signals.py)
+        # and flips it to 'pending' + dispatches generation. Nothing here
+        # talks to Paystack directly — that's payments/services.py.
+        report = PropertyReport.objects.create(
+            pin=pin, status="awaiting_payment", is_free_tier=False, price_charged_kes=PROPERTY_REPORT_PRICE_KES,
+        )
+        authorization_url, error = _initiate_report_payment(report)
+        if error:
+            return Response(
+                {"report_id": str(report.id), "status": report.status, "message": error},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        return Response(
+            {
+                "report_id": str(report.id),
+                "status": report.status,
+                "checkout_url": authorization_url,
+                "amount_kes": str(PROPERTY_REPORT_PRICE_KES),
+                "message": "You've used all your free reports on this device. Complete payment to generate this report.",
+            },
+            status=status.HTTP_402_PAYMENT_REQUIRED,
+        )
+
+    def _resolve_fingerprint(self, fingerprint_hash, ip):
+        fingerprint, created = DeviceFingerprint.objects.get_or_create(fingerprint_hash=fingerprint_hash)
+        is_new_ip = ip not in (fingerprint.known_ips or [])
+        fingerprint.record_sighting(ip=ip)
+
+        # Only spend a lookup call when this IP hasn't been seen on this
+        # device before — repeat requests from the same IP shouldn't
+        # re-query ip-api.com every time.
+        if ip and (created or is_new_ip):
+            is_datacenter, asn_name = check_ip_intel(ip)
+            DeviceFingerprint.objects.filter(pk=fingerprint.pk).update(
+                is_datacenter_ip=is_datacenter, ip_asn_name=asn_name,
+            )
+            fingerprint.is_datacenter_ip = is_datacenter
+            fingerprint.ip_asn_name = asn_name
+
+        return fingerprint
+
+    def _resolve_broker(self, request, email, fingerprint, ip):
+        broker, created = Broker.objects.get_or_create(
+            email=email,
+            defaults={
+                "email_is_disposable": is_disposable_email(email),
+                "device_fingerprint": fingerprint,
+                "signup_ip": ip,
+            },
+        )
+        if not created and broker.device_fingerprint_id != fingerprint.pk:
+            # Same email now showing up on a different device — link it.
+            # This is itself part of the fraud picture (see
+            # DeviceFingerprint.linked_emails growing on the new device),
+            # not something to silently ignore.
+            broker.device_fingerprint = fingerprint
+            broker.save(update_fields=["device_fingerprint"])
+
+        # Link to the logged-in dashboard account, if any. request.user is
+        # AnonymousUser (not None) when no valid JWT was sent — safe to
+        # check .is_authenticated either way.
+        user = getattr(request, "user", None)
+        if user is not None and user.is_authenticated and broker.user_id != user.pk:
+            broker.user = user
+            broker.save(update_fields=["user"])
+
+        fingerprint.record_sighting(email=email)
+        return broker
+
+
+class OTPRequestView(APIView):
+    """POST /api/property/otp/request/ — sends the SMS code for a flagged device."""
+
+    throttle_scope = "property_otp"
+
+    def post(self, request):
+        serializer = OTPRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+
+        fingerprint = get_object_or_404(DeviceFingerprint, fingerprint_hash=data["fingerprint_hash"])
+        if fingerprint.is_blocked:
+            return Response({"error": "This device has been blocked."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            request_otp(fingerprint, data["phone_number"])
+        except OTPError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"message": "Verification code sent."}, status=status.HTTP_200_OK)
+
+
+class OTPVerifyView(APIView):
+    """
+    POST /api/property/otp/verify/ — verifies the code and, if correct,
+    resumes the specific pending report that triggered the OTP requirement.
+    report_id is required (not "most recent pending report for this
+    device") so a client retry or a second in-flight tab can never resume
+    the wrong report.
+    """
+
+    throttle_scope = "property_otp"
+
+    def post(self, request):
+        serializer = OTPVerifySerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+
+        fingerprint = get_object_or_404(DeviceFingerprint, fingerprint_hash=data["fingerprint_hash"])
+
+        try:
+            verify_otp(fingerprint, data["phone_number"], data["code"])
+        except OTPError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        report = get_object_or_404(
+            PropertyReport.objects.select_related("pin__broker__device_fingerprint"),
+            pk=data["report_id"],
+        )
+        if report.pin.broker.device_fingerprint_id != fingerprint.pk:
+            # The verified phone doesn't belong to whoever owns this
+            # report's device — never resume someone else's report.
+            return Response({"error": "This report does not belong to the verified device."}, status=status.HTTP_403_FORBIDDEN)
+
+        if report.status != "pending":
+            return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
+
+        if fingerprint.consume_free_report():
+            generate_report_task.delay(str(report.id))
+            return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
+
+        # Free reports ran out in the gap between the original submission
+        # and OTP verification (rare, but possible under concurrent use).
+        report.status = "awaiting_payment"
+        report.is_free_tier = False
+        report.price_charged_kes = PROPERTY_REPORT_PRICE_KES
+        report.save(update_fields=["status", "is_free_tier", "price_charged_kes"])
+        authorization_url, error = _initiate_report_payment(report)
+        if error:
+            return Response(
+                {"report_id": str(report.id), "status": report.status, "message": error},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        return Response(
+            {
+                "report_id": str(report.id),
+                "status": report.status,
+                "checkout_url": authorization_url,
+                "amount_kes": str(PROPERTY_REPORT_PRICE_KES),
+                "message": "Your free reports on this device were used up while verifying. Complete payment to generate this report.",
+            },
+            status=status.HTTP_402_PAYMENT_REQUIRED,
+        )
+
+
+class ReportStatusView(APIView):
+    """GET /api/property/reports/<uuid:report_id>/ — for the frontend to poll."""
+
+    def get(self, request, report_id):
+        report = get_object_or_404(PropertyReport, pk=report_id)
+        return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
+
+
+class ReportListView(APIView):
+    """
+    GET /api/property/reports/ — the dashboard's "My Reports" list.
+    Requires login (overrides the app-wide AllowAny default) — this is
+    the one endpoint in this app that reads back identity-linked data,
+    everything else here is deliberately anonymous-friendly.
+    Returns reports for every Broker record linked to request.user. Only
+    pins submitted WHILE logged in get linked (see
+    PinSubmitView._resolve_broker) — a broker submitting before ever
+    logging in won't retroactively show up here.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        reports = (
+            PropertyReport.objects
+            .filter(pin__broker__user=request.user)
+            .select_related("pin", "pin__location_cell")
+            .order_by("-created_at")
+        )
+        return Response(PropertyReportSerializer(reports, many=True).data, status=status.HTTP_200_OK)
+
+
+class UsageView(APIView):
+    """
+    GET /api/property/usage/ — free-tier usage for the logged-in user's
+    dashboard (Pricing.jsx reads usage.freeReportsRemaining).
+
+    A user can have multiple Broker records (one per device fingerprint
+    linked while logged in — see PinSubmitView._resolve_broker). Remaining
+    reports are summed across every DISTINCT device fingerprint linked to
+    this user via a DB-level aggregate, not a Python loop, so this stays
+    O(1) queries regardless of how many devices a user has accumulated.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        totals = (
+            DeviceFingerprint.objects
+            .filter(brokers__user=request.user)
+            .distinct()
+            .aggregate(
+                remaining=Sum("free_reports_remaining"),
+                used=Sum("free_reports_used_total"),
+            )
+        )
+        default_free = getattr(settings, "PROPERTY_REPORT_FREE_TIER_DISPLAY", 5)
+        remaining = totals["remaining"]
+        return Response(
+            {
+                "freeReportsRemaining": default_free if remaining is None else remaining,
+                "freeReportsUsedTotal": totals["used"] or 0,
+            },
+            status=status.HTTP_200_OK,
+        )
