@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from .models import PaystackTransaction
+from .models import PaystackTransaction, UserWallet, WalletTransaction
 
 
 class InitializeTransactionSerializer(serializers.Serializer):
@@ -28,4 +28,20 @@ class PaystackTransactionSerializer(serializers.ModelSerializer):
             "reference", "purpose", "external_reference", "amount", "currency",
             "status", "authorization_url", "channel", "paid_at", "created_at",
         ]
+        read_only_fields = fields
+
+
+class WalletTransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WalletTransaction
+        fields = ["transaction_type", "amount", "balance_after", "reference", "note", "created_at"]
+        read_only_fields = fields
+
+
+class WalletSerializer(serializers.ModelSerializer):
+    transactions = WalletTransactionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = UserWallet
+        fields = ["balance", "updated_at", "transactions"]
         read_only_fields = fields

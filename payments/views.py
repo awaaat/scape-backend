@@ -24,8 +24,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import paystack, services
-from .models import PaystackTransaction
-from .serializers import InitializeTransactionSerializer, PaystackTransactionSerializer
+from .models import PaystackTransaction, UserWallet
+from .serializers import InitializeTransactionSerializer, PaystackTransactionSerializer, WalletSerializer
 
 logger = logging.getLogger("payments")
 
@@ -153,3 +153,14 @@ class PaymentHistoryView(APIView):
     def get(self, request):
         txns = PaystackTransaction.objects.filter(email__iexact=request.user.email).order_by("-created_at")
         return Response(PaystackTransactionSerializer(txns, many=True).data, status=status.HTTP_200_OK)
+
+
+class WalletView(APIView):
+    """
+    GET  /api/payments/wallet/  — returns balance + ledger for logged-in user.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        wallet = UserWallet.get_or_create_for_user(request.user)
+        return Response(WalletSerializer(wallet).data, status=status.HTTP_200_OK)

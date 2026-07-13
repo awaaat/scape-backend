@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from . import emails, paystack
 from .models import PaystackTransaction, PaystackWebhookEvent
-from .signals import payment_succeeded
+from .signals import payment_succeeded, wallet_topup_succeeded
 
 logger = logging.getLogger("payments")
 

@@ -25,3 +25,4 @@ kwargs sent with this signal:
 import django.dispatch
 
 payment_succeeded = django.dispatch.Signal()
+wallet_topup_succeeded = django.dispatch.Signal()

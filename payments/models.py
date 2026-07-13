@@ -156,3 +156,72 @@ class PaystackWebhookEvent(models.Model):
 
     def __str__(self):
         return f"{self.event_type} — {self.reference} ({'processed' if self.processed else 'not processed'})"
+
+
+class UserWallet(models.Model):
+    """
+    One row per Django auth user. Balance in KES (major unit, 2dp).
+    Topped up when a wallet_topup payment succeeds; deducted atomically
+    when a paid PropertyReport is dispatched for generation.
+    Never goes negative — the deduction method returns False if insufficient.
+    """
+    from django.conf import settings as _settings
+    user = models.OneToOneField(
+        "auth.User", on_delete=models.CASCADE, related_name="wallet"
+    )
+    balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return f"Wallet({self.user_id}) KES {self.balance}"
+
+    @classmethod
+    def get_or_create_for_user(cls, user):
+        wallet, _ = cls.objects.get_or_create(user=user)
+        return wallet
+
+    def credit(self, amount):
+        """Add amount to balance atomically."""
+        from django.db.models import F
+        UserWallet.objects.filter(pk=self.pk).update(balance=F("balance") + amount)
+        self.refresh_from_db(fields=["balance"])
+
+    def debit(self, amount):
+        """
+        Deduct amount atomically. Returns True if successful, False if
+        insufficient funds. Uses a conditional UPDATE so two concurrent
+        report submissions cannot both succeed against the same balance.
+        """
+        from django.db.models import F
+        updated = UserWallet.objects.filter(
+            pk=self.pk, balance__gte=amount
+        ).update(balance=F("balance") - amount)
+        if updated:
+            self.refresh_from_db(fields=["balance"])
+            return True
+        return False
+
+
+class WalletTransaction(models.Model):
+    """Append-only ledger — every credit and debit, with reason."""
+    TYPES = [
+        ("topup", "Top-up"),
+        ("report_debit", "Report charge"),
+        ("refund", "Refund"),
+    ]
+    wallet = models.ForeignKey(UserWallet, on_delete=models.CASCADE, related_name="transactions")
+    transaction_type = models.CharField(max_length=20, choices=TYPES)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    balance_after = models.DecimalField(max_digits=10, decimal_places=2)
+    reference = models.CharField(max_length=100, blank=True, help_text="Paystack ref or report id")
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} KES {self.amount} — wallet {self.wallet_id}"
