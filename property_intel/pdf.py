@@ -655,6 +655,8 @@ def render_report_pdf(pin, cell):
 
         # Property Location
         story.append(Paragraph(f"PROPERTY LOCATION: {_display_location_name(pin, cell)}", styles['CustomHeading2']))
+        maps_url = _google_maps_view_url(pin)
+        story.append(Paragraph(f'<link href="{maps_url}" color="blue">View on Google Maps</link>', styles['TableCell']))
         story.append(Spacer(1, 4 * mm))
 
         # Executive Summary
