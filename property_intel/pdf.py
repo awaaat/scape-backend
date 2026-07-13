@@ -403,6 +403,12 @@ def _investment_contributors(cell, investment_score):
     elif getattr(cell, "on_paved_road", None) is False:
         reasons.append(("watch", "No mapped road detected nearby -- verify physical access before buying"))
 
+    major_name = getattr(cell, "nearest_major_road_name", None)
+    major_dist = getattr(cell, "nearest_major_road_distance_m", None)
+    if major_name and major_dist:
+        km = major_dist / 1000
+        reasons.append(("strength", f"~{km:.1f}km from {major_name} (major road)"))
+
     if any(label == "Universities" for label, _ in amenity_fields):
         reasons.append(("strength", "Strong student population supports rental demand"))
 
@@ -1019,6 +1025,14 @@ def render_report_pdf(pin, cell):
                     details.append(f"Road Access: On or near a mapped road{road_bit}")
             else:
                 details.append("Road Access: No mapped road detected nearby -- verify physical access before purchase")
+
+        major_name = getattr(cell, "nearest_major_road_name", None)
+        major_dist = getattr(cell, "nearest_major_road_distance_m", None)
+        if major_name and major_dist:
+            km = major_dist / 1000
+            details.append(f"Nearest Major Road: {major_name} (~{km:.1f}km away)")
+        elif major_name:
+            details.append(f"Nearest Major Road: {major_name}")
         
         for detail in details:
             story.append(Paragraph(f"• {detail}", styles['JustifiedNormal']))

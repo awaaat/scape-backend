@@ -784,13 +784,13 @@ TEXT_SEARCH_CATEGORIES = {
 TEXT_SEARCH_FIELD_MASK = "places.displayName,places.location,places.rating,places.id,places.businessStatus,places.photos"
 
 
-def _search_text(cell: LocationCell, text_query):
+def _search_text(cell: LocationCell, text_query, radius_m=5000.0):
     body = {
         "textQuery": text_query,
         "locationBias": {
             "circle": {
                 "center": {"latitude": float(cell.center_latitude), "longitude": float(cell.center_longitude)},
-                "radius": 5000.0,
+                "radius": radius_m,
             }
         },
         "maxResultCount": 20,
@@ -847,6 +847,59 @@ def fetch_text_search_amenities(cell: LocationCell):
 
     if update_fields:
         cell.save(update_fields=update_fields)
+    return cell
+
+
+# ---------------------------------------------------------------------------
+# Major roads -- distance to a known HIGHWAY/ARTERIAL, as opposed to
+# fetch_road_context's nearest-ANY-road (which happily returns a private
+# estate lane 12m away). No polyline data available, so this reuses Places
+# Text Search: query each known major road name with a location bias
+# around the cell, take whichever candidate comes back closest. This is
+# approximate -- Text Search returns a representative indexed point along
+# the road, not a true perpendicular snap -- good enough for "you're ~2km
+# from Thika Road", not survey-grade. Kenya-wide list, so cost is ~20
+# places_text calls the FIRST time a given cell is enriched (cached after).
+# ---------------------------------------------------------------------------
+
+MAJOR_ROADS_KENYA = [
+    "Thika Road", "Mombasa Road", "Waiyaki Way", "Uhuru Highway",
+    "Ngong Road", "Lang'ata Road", "Jogoo Road", "Outer Ring Road",
+    "Eastern Bypass", "Southern Bypass", "Northern Bypass",
+    "Kiambu Road", "Limuru Road", "Nairobi-Nakuru Highway",
+    "Nakuru-Eldoret Highway", "Mombasa-Malindi Road",
+    "Nairobi-Mombasa Highway", "Nyeri-Nairobi Highway",
+    "Kisumu-Kakamega Road", "Eldoret-Kitale Road", "Nakuru-Naivasha Road",
+]
+
+MAJOR_ROAD_SEARCH_RADIUS_M = 15000.0
+
+
+def fetch_major_road_context(cell: LocationCell):
+    best_name = None
+    best_distance = None
+
+    for road_name in MAJOR_ROADS_KENYA:
+        query = f"{road_name} near {cell.center_latitude},{cell.center_longitude}"
+        try:
+            results = _search_text(cell, query, radius_m=MAJOR_ROAD_SEARCH_RADIUS_M)
+        except EnrichmentStepFailed:
+            continue
+        if not results:
+            continue
+        closest = results[0]
+        if closest["distance_m"] is None:
+            continue
+        if best_distance is None or closest["distance_m"] < best_distance:
+            best_distance = closest["distance_m"]
+            best_name = road_name
+
+    cell.nearest_major_road_name = best_name
+    cell.nearest_major_road_distance_m = best_distance
+    cell.major_road_context_fetched_at = timezone.now()
+    cell.save(update_fields=[
+        "nearest_major_road_name", "nearest_major_road_distance_m", "major_road_context_fetched_at",
+    ])
     return cell
 
 
@@ -938,6 +991,7 @@ def enrich_location_cell(cell: LocationCell):
         ("nearest towns", fetch_nearest_towns),
         ("elevation", fetch_elevation),
         ("road context", fetch_road_context),
+        ("major road context", fetch_major_road_context),
         ("text search amenities", fetch_text_search_amenities),
         ("amenity photos", fetch_amenity_photos),
     ]

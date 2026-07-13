@@ -156,6 +156,11 @@ class LocationCell(models.Model):
     nearest_road_name = models.CharField(max_length=255, null=True, blank=True)
     road_context_fetched_at = models.DateTimeField(null=True, blank=True)
 
+    # ── Major road context (Places Text Search, curated highway list) ──
+    nearest_major_road_name = models.CharField(max_length=255, null=True, blank=True)
+    nearest_major_road_distance_m = models.PositiveIntegerField(null=True, blank=True)
+    major_road_context_fetched_at = models.DateTimeField(null=True, blank=True)
+
     # ── Travel times (Routes API) ─────────────────────────────────────
     # {"nairobi_cbd": {"duration_s": int, "distance_m": int}, "local_cbd": {...}}
     travel_times = models.JSONField(default=dict, blank=True)
