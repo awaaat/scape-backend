@@ -20,6 +20,7 @@ from reportlab.platypus import (
     Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
     ListFlowable, ListItem,
 )
+from reportlab.graphics.shapes import Drawing, Rect
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 
 logger = logging.getLogger("property_intel")
@@ -363,6 +364,177 @@ def _density_table_data(cell):
     return rows
 
 
+def _investment_contributors(cell, investment_score):
+    """Returns a list of (kind, text) tuples explaining WHY the investment
+    score is what it is -- kind is 'strength' or 'watch'. This is what
+    turns a bare '73/100' into something that reads as reasoned, not random."""
+    reasons = []
+    amenity_fields = _discover_amenity_fields(cell)
+    density_rows = _density_table_data(cell)
+
+    strong = sorted([r for r in density_rows if r[3] >= 10], key=lambda r: -r[3])[:2]
+    for label, c1, c3, c5 in strong:
+        reasons.append(("strength", f"{c5} {label.lower()} within 5 km"))
+
+    if getattr(cell, "on_paved_road", None) is True:
+        road_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
+        reasons.append(("strength", f"On or near a mapped access road{road_bit}"))
+    elif getattr(cell, "on_paved_road", None) is False:
+        reasons.append(("watch", "No mapped road detected nearby -- verify physical access before buying"))
+
+    if any(label == "Universities" for label, _ in amenity_fields):
+        reasons.append(("strength", "Strong student population supports rental demand"))
+
+    if any(label == "Gated Communities" for label, _ in amenity_fields):
+        reasons.append(("strength", "Established residential neighbourhood nearby"))
+    elif any(label == "Student Housing" for label, _ in amenity_fields):
+        reasons.append(("strength", "Active student housing market nearby"))
+
+    if not any(label == "Shopping" for label, _ in amenity_fields):
+        reasons.append(("watch", "Limited commercial/retail activity nearby"))
+
+    if cell.air_quality_index is not None:
+        if cell.air_quality_index <= AQI_GOOD_THRESHOLD:
+            reasons.append(("strength", f"Good air quality (AQI {cell.air_quality_index})"))
+        elif cell.air_quality_index > AQI_MODERATE_THRESHOLD:
+            reasons.append(("watch", f"Elevated AQI ({cell.air_quality_index}) may affect livability"))
+
+    town, benchmark = _match_price_benchmark(cell)
+    if benchmark and benchmark.get("yoy_change_pct") is not None:
+        yoy = benchmark["yoy_change_pct"]
+        if yoy > 0:
+            reasons.append(("strength", f"{town.title()} land values rose {yoy}% in the past year"))
+        elif yoy < 0:
+            reasons.append(("watch", f"{town.title()} land values fell {abs(yoy)}% in the past year"))
+
+    nairobi = (cell.travel_times or {}).get("nairobi_cbd")
+    if nairobi and nairobi.get("duration_s"):
+        minutes = round(nairobi["duration_s"] / 60)
+        if minutes < 60:
+            reasons.append(("strength", f"{minutes}-minute drive to Nairobi CBD"))
+
+    return reasons[:7]
+
+
+def _category_stars(cell, investment_score):
+    """1-5 rating per category, derived entirely from amenity density already
+    on the cell -- no extra API calls needed."""
+    density = {label: c5 for label, c1, c3, c5 in _density_table_data(cell)}
+
+    def stars(count, thresholds=(1, 3, 7, 15)):
+        s = 1
+        for t in thresholds:
+            if count >= t:
+                s += 1
+        return min(s, 5)
+
+    education = density.get("Universities", 0) + density.get("Schools", 0)
+    healthcare = density.get("Hospitals", 0) + density.get("Pharmacies", 0)
+    transport = density.get("Petrol Stations", 0) + density.get("Transit Stops", 0)
+    shopping = (
+        density.get("Shopping", 0) + density.get("Supermarkets", 0)
+        + density.get("Restaurants", 0) + density.get("Banks", 0)
+    )
+    investment_stars = max(1, min(5, round(investment_score / 20)))
+
+    return [
+        ("Education", stars(education)),
+        ("Healthcare", stars(healthcare)),
+        ("Transport", stars(transport)),
+        ("Shopping", stars(shopping)),
+        ("Investment", investment_stars),
+    ]
+
+
+def _stars_drawing(filled, total=5, box=9, gap=2.5):
+    """Small colored-square rating bar -- avoids relying on Unicode star
+    glyphs, which base-14 PDF fonts can't reliably render."""
+    d = Drawing(total * (box + gap), box)
+    for i in range(total):
+        x = i * (box + gap)
+        color = colors.HexColor('#f2a900') if i < filled else colors.HexColor('#e3e3e3')
+        d.add(Rect(x, 0, box, box, fillColor=color, strokeColor=None))
+    return d
+
+
+def _ai_investment_opinion(pin, cell, investment_score, suitability_data):
+    """Deterministic, data-grounded narrative paragraph -- reads like an
+    analyst's opinion but every claim traces back to a fetched data point,
+    so it never invents anything."""
+    location_name = _display_location_name(pin, cell)
+    best = [s for s in suitability_data if s[1] in ("Very High", "High")]
+    weak = [s for s in suitability_data if s[1] == "Low"]
+
+    if best:
+        best_types = ", ".join(s[0].lower() for s in best)
+        opinion = f"{location_name} is best suited for {best_types}, based on the amenity mix and infrastructure signals captured in this report."
+    else:
+        opinion = f"{location_name} shows moderate suitability across development types, with no single category standing out strongly."
+
+    town, benchmark = _match_price_benchmark(cell)
+    if benchmark and benchmark.get("note"):
+        opinion += f" {benchmark['note'].capitalize()}."
+
+    if weak:
+        risk = f"Primary risk: {weak[0][2].lower()}."
+    else:
+        risk = "Primary risk: confirm zoning, ownership documents, and physical access with a local agent before committing capital."
+
+    return opinion, risk
+
+
+def _top_reasons(cell, pin, accessibility_score):
+    """Cap-5 list of the strongest, most concrete selling points -- pulled
+    from the same contributor logic used for the score explanation."""
+    contributors = _investment_contributors(cell, 0)
+    strengths = [text for kind, text in contributors if kind == "strength"]
+
+    nearest_town = _nearest_town_summary(cell)
+    if nearest_town:
+        town_label, minutes, km = nearest_town
+        if minutes is not None:
+            strengths.insert(0, f"{minutes} minutes to {town_label}")
+
+    seen = set()
+    deduped = []
+    for s in strengths:
+        if s not in seen:
+            seen.add(s)
+            deduped.append(s)
+    return deduped[:5]
+
+
+def _google_maps_directions_url(pin):
+    return f"https://www.google.com/maps/dir/?api=1&destination={pin.latitude},{pin.longitude}"
+
+
+def _google_maps_view_url(pin):
+    """Shareable link that just drops a pin -- for a broker forwarding the
+    report before the buyer is ready to navigate there yet."""
+    return f"https://www.google.com/maps/search/?api=1&query={pin.latitude},{pin.longitude}"
+
+
+PHOTO_DISPLAY_CATEGORIES = ("Schools", "Hospitals", "Universities", "Shopping", "Gated Communities")
+
+
+def _collect_amenity_photos(cell, max_photos=4):
+    """Nearest amenities (across the sellable categories) that have a
+    photo already downloaded by google_client.fetch_amenity_photos --
+    sorted by distance so the closest, most relevant landmarks show first."""
+    amenity_fields = _discover_amenity_fields(cell)
+    candidates = []
+    for label, entries in amenity_fields:
+        if label not in PHOTO_DISPLAY_CATEGORIES:
+            continue
+        for entry in entries:
+            if entry.get("photo_url"):
+                candidates.append((label, entry))
+    candidates.sort(
+        key=lambda pair: pair[1].get("distance_m") if pair[1].get("distance_m") is not None else float("inf")
+    )
+    return candidates[:max_photos]
+
+
 def render_report_pdf(pin, cell):
     try:
         accessibility_score = _score_accessibility(cell)
@@ -508,6 +680,70 @@ def render_report_pdf(pin, cell):
         ))
         story.append(Spacer(1, 6 * mm))
 
+        # Why This Score -- contributors
+        contributors = _investment_contributors(cell, investment_score)
+        if contributors:
+            story.append(Paragraph("WHY THIS SCORE", styles['CustomHeading3']))
+            story.append(Spacer(1, 2 * mm))
+            contributor_items = []
+            for kind, text in contributors:
+                if kind == "strength":
+                    line = f"<font color='#1a7a3a'><b>Strength</b></font> &mdash; {text}"
+                else:
+                    line = f"<font color='#b8860b'><b>Watch</b></font> &mdash; {text}"
+                contributor_items.append(
+                    ListItem(Paragraph(line, styles['JustifiedNormal']), leftIndent=4 * mm, spaceAfter=2)
+                )
+            story.append(ListFlowable(
+                contributor_items, bulletType='bullet', start='•',
+                leftIndent=6 * mm, bulletFontSize=9,
+            ))
+            story.append(Spacer(1, 6 * mm))
+
+        # Location Scores -- category star/bar ratings
+        category_scores = _category_stars(cell, investment_score)
+        story.append(Paragraph("LOCATION SCORES", styles['CustomHeading3']))
+        story.append(Spacer(1, 2 * mm))
+        score_rows = []
+        for label, stars in category_scores:
+            score_rows.append([
+                Paragraph(label, styles['TableCell']),
+                _stars_drawing(stars),
+            ])
+        scores_table = Table(score_rows, colWidths=[45 * mm, 60 * mm])
+        scores_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ]))
+        story.append(scores_table)
+        story.append(Spacer(1, 6 * mm))
+
+        # AI Investment Opinion
+        story.append(Paragraph("AI INVESTMENT OPINION", styles['CustomHeading3']))
+        story.append(Spacer(1, 2 * mm))
+        suitability_data = _development_suitability_table(cell)
+        opinion_text, risk_text = _ai_investment_opinion(pin, cell, investment_score, suitability_data)
+        story.append(Paragraph(opinion_text, styles['JustifiedNormal']))
+        story.append(Paragraph(f"<i>{risk_text}</i>", styles['JustifiedNormal']))
+        story.append(Spacer(1, 6 * mm))
+
+        # Top Reasons
+        top_reasons = _top_reasons(cell, pin, accessibility_score)
+        if top_reasons:
+            story.append(Paragraph("TOP REASONS TO CONSIDER THIS PROPERTY", styles['CustomHeading3']))
+            story.append(Spacer(1, 2 * mm))
+            reason_items = [
+                ListItem(Paragraph(r, styles['JustifiedNormal']), leftIndent=4 * mm, spaceAfter=2)
+                for r in top_reasons
+            ]
+            story.append(ListFlowable(
+                reason_items, bulletType='bullet', start='•',
+                leftIndent=6 * mm, bulletFontSize=9,
+            ))
+            story.append(Spacer(1, 6 * mm))
+
         mv_town, mv_benchmark = _match_price_benchmark(cell)
         if mv_benchmark:
             story.append(Paragraph("MARKET VALUES", styles['CustomHeading2']))
@@ -567,6 +803,75 @@ def render_report_pdf(pin, cell):
                 story.append(Paragraph("STREET VIEW", styles['CustomHeading3']))
                 story.append(sv_image)
                 story.append(Spacer(1, 4 * mm))
+
+        # Access & Directions -- shareable pin link, one-tap navigation,
+        # and turn-by-turn steps from the nearest town (when Routes
+        # returned them -- see google_client.fetch_nearest_towns).
+        directions_url = _google_maps_directions_url(pin)
+        view_url = _google_maps_view_url(pin)
+        story.append(Paragraph("ACCESS & DIRECTIONS", styles['CustomHeading3']))
+        story.append(Spacer(1, 1 * mm))
+        story.append(Paragraph(
+            f"<link href='{view_url}' color='#1a4a7e'><b>View on Google Maps</b></link>"
+            f"&nbsp;&nbsp;|&nbsp;&nbsp;"
+            f"<link href='{directions_url}' color='#1a4a7e'><b>Get Directions &rarr;</b></link>",
+            styles['JustifiedNormal']
+        ))
+
+        steps_source = next((t for t in (cell.nearest_towns or []) if t.get("directions_steps")), None)
+        if steps_source:
+            story.append(Spacer(1, 3 * mm))
+            story.append(Paragraph(
+                f"<b>Driving from {steps_source['name'].title()}:</b>", styles['JustifiedNormal']
+            ))
+            step_items = [
+                ListItem(Paragraph(step, styles['TableCell']), leftIndent=4 * mm, spaceAfter=2)
+                for step in steps_source["directions_steps"][:12]
+            ]
+            story.append(ListFlowable(
+                step_items, bulletType='1', start='1',
+                leftIndent=6 * mm, bulletFontSize=9,
+            ))
+        story.append(Spacer(1, 6 * mm))
+
+        # Nearby Landmarks -- real photos of the closest sellable amenities
+        photo_entries = _collect_amenity_photos(cell, max_photos=4)
+        if photo_entries:
+            story.append(Paragraph("NEARBY LANDMARKS", styles['CustomHeading2']))
+            story.append(Spacer(1, 2 * mm))
+
+            photo_cells = []
+            for label, entry in photo_entries:
+                img = _fetch_image_flowable(entry.get("photo_url"), width_mm=75, height_mm=55)
+                if not img:
+                    continue
+                caption = Paragraph(
+                    f"<b>{entry.get('name', '')}</b><br/>{label} &middot; {_format_distance(entry.get('distance_m'))}",
+                    styles['TableCell'],
+                )
+                photo_cells.append([img, caption])
+
+            rows = []
+            for i in range(0, len(photo_cells), 2):
+                pair = photo_cells[i:i + 2]
+                img_row = [p[0] for p in pair]
+                cap_row = [p[1] for p in pair]
+                if len(pair) == 1:
+                    img_row.append("")
+                    cap_row.append("")
+                rows.append(img_row)
+                rows.append(cap_row)
+
+            if rows:
+                photo_table = Table(rows, colWidths=[80 * mm, 80 * mm])
+                photo_table.setStyle(TableStyle([
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                    ('TOPPADDING', (0, 0), (-1, -1), 3),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ]))
+                story.append(photo_table)
+            story.append(Spacer(1, 6 * mm))
 
         # Specific Named Amenities - FULL DETAILS with formatted distances
         amenity_fields = _discover_amenity_fields(cell)

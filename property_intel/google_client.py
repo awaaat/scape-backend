@@ -56,6 +56,7 @@ ESTIMATED_COST_USD = {
     "routes_transit": 0.005,
     "roads": 0.005,
     "places_text": 0.032,
+    "places_photo": 0.007,
 }
 
 PLACE_CATEGORIES = {
@@ -250,7 +251,8 @@ def fetch_street_view_image(cell: LocationCell):
 
 PLACES_FIELD_MASK = (
     "places.displayName,places.location,places.rating,places.id,"
-    "places.userRatingCount,places.priceLevel,places.regularOpeningHours,places.businessStatus"
+    "places.userRatingCount,places.priceLevel,places.regularOpeningHours,places.businessStatus,"
+    "places.photos"
 )
 
 
@@ -302,6 +304,7 @@ def _search_nearby(cell: LocationCell, included_type):
             "price_level": place.get("priceLevel"),
             "business_status": place.get("businessStatus", ""),
             "open_now": hours.get("openNow"),
+            "photo_name": (place.get("photos") or [{}])[0].get("name"),
             "distance_m": _haversine_m(center_lat, center_lng, loc.get("latitude"), loc.get("longitude")),
         })
     results.sort(key=lambda r: r["distance_m"] if r["distance_m"] is not None else float("inf"))
@@ -569,7 +572,7 @@ def fetch_nearest_towns(cell: LocationCell):
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": GOOGLE_API_KEY,
-            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters",
+            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.legs.steps.navigationInstruction.instructions",
         }
         try:
             resp = requests.post(
@@ -590,6 +593,18 @@ def fetch_nearest_towns(cell: LocationCell):
             route = data["routes"][0]
             entry["drive_duration_s"] = int(str(route.get("duration", "0s")).rstrip("s"))
             entry["drive_distance_m"] = route.get("distanceMeters")
+            # Turn-by-turn text is only worth keeping for the single nearest
+            # town -- that's the one pdf.py uses for the Access section, and
+            # it keeps the stored JSON small.
+            if town["rank"] == 1:
+                steps = []
+                for leg in route.get("legs", []):
+                    for step in leg.get("steps", []):
+                        instruction = step.get("navigationInstruction", {}).get("instructions")
+                        if instruction:
+                            steps.append(instruction)
+                if steps:
+                    entry["directions_steps"] = steps
 
         results.append(entry)
 
@@ -707,7 +722,7 @@ TEXT_SEARCH_CATEGORIES = {
     "nearby_gated_communities": "gated community estate",
 }
 
-TEXT_SEARCH_FIELD_MASK = "places.displayName,places.location,places.rating,places.id,places.businessStatus"
+TEXT_SEARCH_FIELD_MASK = "places.displayName,places.location,places.rating,places.id,places.businessStatus,places.photos"
 
 
 def _search_text(cell: LocationCell, text_query):
@@ -754,6 +769,7 @@ def _search_text(cell: LocationCell, text_query):
             "lng": loc.get("longitude"),
             "rating": place.get("rating"),
             "business_status": place.get("businessStatus", ""),
+            "photo_name": (place.get("photos") or [{}])[0].get("name"),
             "distance_m": _haversine_m(center_lat, center_lng, loc.get("latitude"), loc.get("longitude")),
         })
     results.sort(key=lambda r: r["distance_m"] if r["distance_m"] is not None else float("inf"))
@@ -772,6 +788,70 @@ def fetch_text_search_amenities(cell: LocationCell):
 
     if update_fields:
         cell.save(update_fields=update_fields)
+    return cell
+
+
+# ---------------------------------------------------------------------------
+# Amenity Photos — Places Photo Media. Downloads a photo for a handful of
+# the nearest, most sellable amenities (schools/hospitals/universities/
+# shopping/gated communities) and re-uploads to OUR storage, same reasoning
+# as satellite/street view: never hand back a raw Google URL with the key
+# embedded. photo_url is written directly onto the existing JSON entry
+# already stored on the cell (nearby_schools, etc.) — no new DB columns,
+# no migration needed.
+# ---------------------------------------------------------------------------
+
+PHOTO_CATEGORIES = (
+    "nearby_schools", "nearby_hospitals", "nearby_universities",
+    "nearby_shopping", "nearby_gated_communities",
+)
+MAX_AMENITY_PHOTOS = 4
+
+
+def fetch_amenity_photos(cell: LocationCell):
+    from . import storage
+
+    update_fields = []
+    photos_fetched = 0
+
+    for field_name in PHOTO_CATEGORIES:
+        if photos_fetched >= MAX_AMENITY_PHOTOS:
+            break
+        entries = getattr(cell, field_name, None) or []
+        candidate = next((e for e in entries if e.get("photo_name") and not e.get("photo_url")), None)
+        if not candidate:
+            continue
+
+        photo_name = candidate["photo_name"]
+        params = {"maxWidthPx": 400, "key": GOOGLE_API_KEY}
+        try:
+            resp = requests.get(
+                f"https://places.googleapis.com/v1/{photo_name}/media",
+                params=params, timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            succeeded = resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/")
+        except requests.RequestException as exc:
+            logger.warning("Amenity photo fetch failed for cell %s (%s): %s", cell.geohash, photo_name, exc)
+            _log_call("places_photo", cell, {"photo_name": photo_name}, None, False)
+            continue
+
+        _log_call("places_photo", cell, {"photo_name": photo_name}, resp.status_code, succeeded)
+        if not succeeded:
+            continue
+
+        safe_id = (candidate.get("place_id") or "")[:40] or f"photo{photos_fetched}"
+        stored_url = storage.upload_image_bytes(
+            resp.content,
+            path=f"location-cells/{cell.geohash}/amenities/{safe_id}.jpg",
+            content_type="image/jpeg",
+        )
+        candidate["photo_url"] = stored_url
+        setattr(cell, field_name, entries)
+        update_fields.append(field_name)
+        photos_fetched += 1
+
+    if update_fields:
+        cell.save(update_fields=list(set(update_fields)))
     return cell
 
 
@@ -800,6 +880,7 @@ def enrich_location_cell(cell: LocationCell):
         ("elevation", fetch_elevation),
         ("road context", fetch_road_context),
         ("text search amenities", fetch_text_search_amenities),
+        ("amenity photos", fetch_amenity_photos),
     ]
 
     failures = []
