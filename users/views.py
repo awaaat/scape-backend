@@ -9,6 +9,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .emails import send_verification_email, send_welcome_email
 from .models import UserSignup
 from .serializers import (
+    ChangePasswordSerializer,
     EmailVerificationConfirmSerializer,
     EmailVerificationRequestSerializer,
     LoginSerializer,
@@ -130,3 +131,22 @@ class MeView(APIView):
         if signup is None:
             return Response({"detail": "No profile found for this account."}, status=status.HTTP_404_NOT_FOUND)
         return Response(UserSignupReadSerializer(signup).data)
+
+
+class ChangePasswordView(APIView):
+    """POST /api/users/change-password/ — requires current password to
+    confirm identity before setting a new one."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        if not user.check_password(serializer.validated_data["current_password"]):
+            return Response({"detail": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return Response({"detail": "Password updated."}, status=status.HTTP_200_OK)

@@ -19,10 +19,12 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import paystack, services
+from .models import PaystackTransaction
 from .serializers import InitializeTransactionSerializer, PaystackTransactionSerializer
 
 logger = logging.getLogger("payments")
@@ -139,3 +141,15 @@ class PaystackWebhookView(View):
             event_row.save(update_fields=["processing_note"])
 
         return JsonResponse({"status": "ok"}, status=200)
+
+
+class PaymentHistoryView(APIView):
+    """GET /api/payments/history/ — the logged-in user's own payment
+    history, matched by their account email. Read-only, no cross-user
+    leakage: filtered strictly to request.user.email."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        txns = PaystackTransaction.objects.filter(email__iexact=request.user.email).order_by("-created_at")
+        return Response(PaystackTransactionSerializer(txns, many=True).data, status=status.HTTP_200_OK)

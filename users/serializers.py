@@ -109,3 +109,13 @@ class LoginSerializer(serializers.Serializer):
 
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """POST body for /api/users/change-password/."""
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+
+    def validate_new_password(self, value):
+        django_validate_password(value)
+        return value
