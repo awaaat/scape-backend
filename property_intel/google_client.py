@@ -80,6 +80,19 @@ PLACE_CATEGORIES = {
 }
 
 
+def _is_settlement_name(name):
+    """True if a Places result's display name is actually a town/city name
+    itself (e.g. searchNearby type=park returning 'Eldoret') -- Google
+    occasionally mislabels an administrative area/locality with a POI type
+    it doesn't belong to. An entire town is not a park, a school, or a
+    petrol station; filtering these at the source is more honest than
+    showing them as a nearby amenity."""
+    if not name:
+        return False
+    from .kenya_towns import load_towns
+    return name.strip().lower() in {t["name"].strip().lower() for t in load_towns()}
+
+
 def _log_call(api, location_cell, request_params, status_code, succeeded):
     APICallLog.objects.create(
         api=api,
@@ -297,8 +310,11 @@ def _search_nearby(cell: LocationCell, included_type):
     for place in data.get("places", []):
         loc = place.get("location", {})
         hours = place.get("regularOpeningHours", {}) or {}
+        name = place.get("displayName", {}).get("text", "")
+        if _is_settlement_name(name):
+            continue
         results.append({
-            "name": place.get("displayName", {}).get("text", ""),
+            "name": name,
             "place_id": place.get("id", ""),
             "lat": loc.get("latitude"),
             "lng": loc.get("longitude"),
@@ -1000,8 +1016,11 @@ def _search_text(cell: LocationCell, text_query, radius_m=5000.0):
     center_lat, center_lng = float(cell.center_latitude), float(cell.center_longitude)
     for place in data.get("places", []):
         loc = place.get("location", {})
+        name = place.get("displayName", {}).get("text", "")
+        if _is_settlement_name(name):
+            continue
         results.append({
-            "name": place.get("displayName", {}).get("text", ""),
+            "name": name,
             "place_id": place.get("id", ""),
             "lat": loc.get("latitude"),
             "lng": loc.get("longitude"),
@@ -1026,6 +1045,64 @@ def fetch_text_search_amenities(cell: LocationCell):
 
     if update_fields:
         cell.save(update_fields=update_fields)
+    return cell
+
+
+COINCIDENT_DISTANCE_THRESHOLD_M = 10
+
+
+def _null_out_coincident_zero_distances(cell: LocationCell):
+    """
+    Small Kenyan businesses are frequently geocoded on Google Maps to a
+    shared reference point (the nearest well-known landmark, or the town
+    center itself) rather than their true location -- whoever registered
+    the listing never dropped an accurate pin. The tell: several UNRELATED
+    categories (a school, a petrol station, a university, a gated
+    community) all reporting the exact same near-zero distance from the
+    property, down to the meter. Real amenities of different kinds cannot
+    occupy the same few square meters -- so when 3+ distinct categories
+    collapse onto one identical distance, that number isn't a measurement,
+    it's a shared placeholder geocode. Blanking it out (None -> "Unknown"
+    in the PDF) is more honest than asserting false precision. Runs after
+    BOTH fetch_nearby_amenities and fetch_text_search_amenities so it sees
+    every category, not just one API's.
+    """
+    amenity_field_names = [
+        f.name for f in cell._meta.get_fields()
+        if getattr(f, "name", "").startswith("nearby_")
+    ]
+
+    by_distance = {}
+    for field_name in amenity_field_names:
+        entries = getattr(cell, field_name, None) or []
+        for entry in entries:
+            d = entry.get("distance_m")
+            if d is not None and d <= COINCIDENT_DISTANCE_THRESHOLD_M:
+                by_distance.setdefault(d, []).append((field_name, entry))
+
+    changed_fields = set()
+    for distance_m, hits in by_distance.items():
+        distinct_categories = {field for field, _ in hits}
+        if len(distinct_categories) < 3:
+            continue  # 1-2 genuinely close amenities is plausible -- leave it
+        logger.info(
+            "Cell %s: %s distinct categories reported an identical %sm distance "
+            "-- treating as a shared/placeholder geocode, not a real measurement: %s",
+            cell.geohash, len(distinct_categories), distance_m,
+            ", ".join(f"{field}:{entry.get('name')}" for field, entry in hits),
+        )
+        for field_name, entry in hits:
+            entry["distance_m"] = None
+            entry["location_approximate"] = True
+            changed_fields.add(field_name)
+
+    for field_name in changed_fields:
+        entries = getattr(cell, field_name, None) or []
+        entries.sort(key=lambda e: e.get("distance_m") if e.get("distance_m") is not None else float("inf"))
+        setattr(cell, field_name, entries)
+
+    if changed_fields:
+        cell.save(update_fields=list(changed_fields))
     return cell
 
 
@@ -1332,6 +1409,7 @@ def enrich_location_cell(cell: LocationCell):
         ("road context", fetch_road_context),
         ("nearby roads context", fetch_nearby_roads_context),
         ("text search amenities", fetch_text_search_amenities),
+        ("coincident distance cleanup", _null_out_coincident_zero_distances),
         ("amenity photos", fetch_amenity_photos),
     ]
 
