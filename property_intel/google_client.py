@@ -22,6 +22,7 @@ from datetime import timedelta
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 
 from .models import APICallLog, LocationCell
@@ -538,7 +539,25 @@ def fetch_travel_times(cell: LocationCell):
 # Kenya, not just Nairobi's commuter belt.
 # ---------------------------------------------------------------------------
 
-_ROAD_NAME_FROM_INSTRUCTION = re.compile(r"on(?:to)?\s+(.+?)(?:,|\s+toward|\s+for|\s*$)", re.IGNORECASE)
+_ROAD_NAME_FROM_INSTRUCTION = re.compile(r"on(?:to)?\s+(.+?)(?:,|\s+toward|\s+for|\s*$)", re.IGNORECASE)
+
+_KENYA_ROAD_CODE_RE = re.compile(r"\b([ABC])-?\s?(\d{1,3})\b")
+_MAJOR_ROAD_KEYWORDS = ("highway", "bypass", "expressway", "superhighway")
+UNNAMED_STEP_MIN_DISTANCE_M = 150
+
+
+def _road_tier(name):
+    """'major' if the name matches Kenya's A/B/C trunk-road coding or a
+    highway/bypass/expressway keyword; 'named' for any other real road
+    name; 'none' if there's no name at all."""
+    if not name:
+        return "none"
+    code_match = _KENYA_ROAD_CODE_RE.search(name.upper())
+    if code_match and code_match.group(1) in ("A", "B", "C"):
+        return "major"
+    if any(keyword in name.lower() for keyword in _MAJOR_ROAD_KEYWORDS):
+        return "major"
+    return "named"
 
 
 def _extract_road_name(instruction):
@@ -558,32 +577,116 @@ def _extract_road_name(instruction):
     return name
 
 
-def _major_road_from_steps(step_pairs):
-    """step_pairs: [(instruction_text, distance_m), ...] for ONE driving
-    route, in order from the property. Returns (road_name, distance_from_
-    property_m) for whichever named road the route spends the MOST
-    cumulative distance on -- i.e. the de facto major/arterial road
-    connecting this specific property to the nearest town, whatever town
-    or road that happens to be. This replaces matching against a fixed,
-    inevitably-incomplete list of named Kenyan roads (see the old
-    MAJOR_ROADS_KENYA) with something that's correct everywhere by
-    construction. Returns (None, None) if no step names a real road."""
+def _resolve_unnamed_steps(step_records, cell):
+    """
+    step_records: [{"instruction", "distance_m", "name", "lat", "lng"}, ...]
+    for ONE route, in order. For any step long enough to matter where the
+    text named nothing, snaps that step's start coordinate to Google's
+    real road network (Roads API nearestRoads) and resolves the segment's
+    actual name via Place Details -- same technique fetch_road_context()
+    already uses at the property's own point. Bounded cost: only
+    unnamed, substantial steps trigger a lookup, batched into one Roads
+    API call per route; resolved names are cached by placeId (30-day TTL)
+    since the same segment recurs across many properties in the area.
+    """
+    unresolved_indices = [
+        i for i, s in enumerate(step_records)
+        if not s.get("name")
+        and (s.get("distance_m") or 0) >= UNNAMED_STEP_MIN_DISTANCE_M
+        and s.get("lat") is not None and s.get("lng") is not None
+    ]
+    if not unresolved_indices:
+        return step_records
+
+    points = [(step_records[i]["lat"], step_records[i]["lng"]) for i in unresolved_indices]
+    try:
+        resp = requests.get(
+            "https://roads.googleapis.com/v1/nearestRoads",
+            params={"points": "|".join(f"{lat},{lng}" for lat, lng in points), "key": GOOGLE_API_KEY},
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        succeeded = resp.status_code == 200
+        data = resp.json() if succeeded else {}
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Roads API route-gap fetch failed for cell %s: %s", cell.geohash, exc)
+        _log_call("roads", cell, {"points": len(points)}, None, False)
+        return step_records
+
+    _log_call("roads", cell, {"points": len(points)}, resp.status_code, succeeded)
+    if not succeeded:
+        return step_records
+
+    place_id_by_step = {}
+    for snapped in data.get("snappedPoints", []):
+        step_idx = unresolved_indices[snapped.get("originalIndex", 0)]
+        place_id = snapped.get("placeId")
+        if place_id:
+            place_id_by_step[step_idx] = place_id
+
+    name_by_place_id = {}
+    for place_id in sorted(set(place_id_by_step.values())):
+        cache_key = f"road_place_name:{place_id}"
+        cached_name = cache.get(cache_key)
+        if cached_name is not None:
+            name_by_place_id[place_id] = cached_name or None
+            continue
+
+        try:
+            resp = requests.get(
+                f"https://places.googleapis.com/v1/places/{place_id}",
+                headers={"X-Goog-Api-Key": GOOGLE_API_KEY, "X-Goog-FieldMask": "displayName"},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            ok = resp.status_code == 200
+            body = resp.json() if ok else {}
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning("Road name lookup failed for cell %s (%s): %s", cell.geohash, place_id, exc)
+            _log_call("road_name", cell, {"place_id": place_id}, None, False)
+            ok, body = False, {}
+        else:
+            _log_call("road_name", cell, {"place_id": place_id}, resp.status_code, ok)
+
+        resolved = body.get("displayName", {}).get("text") if ok else None
+        if resolved and resolved.strip().lower() in GENERIC_ROAD_NAMES:
+            resolved = None
+        name_by_place_id[place_id] = resolved
+        cache.set(cache_key, resolved or "", timeout=60 * 60 * 24 * 30)
+
+    for step_idx, place_id in place_id_by_step.items():
+        resolved_name = name_by_place_id.get(place_id)
+        if resolved_name:
+            step_records[step_idx]["name"] = resolved_name
+
+    return step_records
+
+
+def _major_road_from_step_records(step_records):
+    """step_records: [{"name", "distance_m", ...}, ...] for ONE route, in
+    order, AFTER _resolve_unnamed_steps has filled in gaps. Prefers the
+    FIRST step whose road classifies as 'major'; falls back to the named
+    road the route spends the most cumulative distance on if no step
+    classifies as major. Returns (None, None, None) if no step names any
+    road at all."""
+    running_offset = 0
+    first_major = None
     totals = {}
     first_seen_offset = {}
-    running_offset = 0
-    for instruction, distance_m in step_pairs:
-        distance_m = distance_m or 0
-        name = _extract_road_name(instruction)
+    for step in step_records:
+        distance_m = step.get("distance_m") or 0
+        name = step.get("name")
         if name:
+            if first_major is None and _road_tier(name) == "major":
+                first_major = (name, running_offset)
             totals[name] = totals.get(name, 0) + distance_m
             first_seen_offset.setdefault(name, running_offset)
         running_offset += distance_m
 
-    if not totals:
-        return None, None
-
-    best_name = max(totals, key=totals.get)
-    return best_name, first_seen_offset[best_name]
+    if first_major:
+        return first_major[0], first_major[1], "major"
+    if totals:
+        best_name = max(totals, key=totals.get)
+        return best_name, first_seen_offset[best_name], "named"
+    return None, None, None
 
 
 def fetch_nearest_towns(cell: LocationCell):
@@ -602,7 +705,7 @@ def fetch_nearest_towns(cell: LocationCell):
     )
 
     results = []
-    for town in candidates:
+    for i, town in enumerate(candidates):
         entry = {
             "name": town["name"],
             "county": town["county"],
@@ -621,7 +724,12 @@ def fetch_nearest_towns(cell: LocationCell):
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": GOOGLE_API_KEY,
-            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.legs.steps.navigationInstruction.instructions,routes.legs.steps.distanceMeters",
+            "X-Goog-FieldMask": (
+                "routes.duration,routes.distanceMeters,"
+                "routes.legs.steps.navigationInstruction.instructions,"
+                "routes.legs.steps.distanceMeters,"
+                "routes.legs.steps.startLocation"
+            ),
         }
         try:
             resp = requests.post(
@@ -642,27 +750,37 @@ def fetch_nearest_towns(cell: LocationCell):
             route = data["routes"][0]
             entry["drive_duration_s"] = int(str(route.get("duration", "0s")).rstrip("s"))
             entry["drive_distance_m"] = route.get("distanceMeters")
-            # Turn-by-turn text is only worth keeping for the single nearest
-            # town -- that's the one pdf.py uses for the Access section, and
-            # it keeps the stored JSON small.
-            if town["rank"] == 1:
-                steps = []
-                step_pairs = []
-                for leg in route.get("legs", []):
-                    for step in leg.get("steps", []):
-                        instruction = step.get("navigationInstruction", {}).get("instructions")
-                        if instruction:
-                            steps.append(instruction)
-                            step_pairs.append((instruction, step.get("distanceMeters")))
-                if steps:
-                    entry["directions_steps"] = steps
-                # The road this route spends the most distance on, on the
-                # way to whichever town is actually nearest THIS property --
-                # see fetch_major_road_context below, which now reads this
-                # instead of matching against a hardcoded road list.
-                major_name, major_distance_m = _major_road_from_steps(step_pairs)
-                entry["major_road_name"] = major_name
-                entry["major_road_distance_m"] = major_distance_m
+
+            step_records = []
+            for leg in route.get("legs", []):
+                for step in leg.get("steps", []):
+                    instruction = step.get("navigationInstruction", {}).get("instructions")
+                    start = (step.get("startLocation") or {}).get("latLng") or {}
+                    step_records.append({
+                        "instruction": instruction,
+                        "distance_m": step.get("distanceMeters"),
+                        "name": _extract_road_name(instruction),
+                        "lat": start.get("latitude"),
+                        "lng": start.get("longitude"),
+                    })
+
+            step_records = _resolve_unnamed_steps(step_records, cell)
+
+            major_name, major_distance_m, major_tier = _major_road_from_step_records(step_records)
+            entry["major_road_name"] = major_name
+            entry["major_road_distance_m"] = major_distance_m
+            entry["major_road_tier"] = major_tier
+
+            # i == 0 is the TRUE nearest town (candidates is already
+            # distance-sorted) -- NOT town["rank"], which is a fixed
+            # national/county seniority tier from the CSV (e.g. Nairobi
+            # City is rank 1 nationally even when it isn't closest to
+            # this property). Using rank here previously showed
+            # directions from the wrong town entirely.
+            if i == 0:
+                steps_text = [s["instruction"] for s in step_records if s.get("instruction")]
+                if steps_text:
+                    entry["directions_steps"] = steps_text
 
         results.append(entry)
 
@@ -912,20 +1030,29 @@ def fetch_text_search_amenities(cell: LocationCell):
 
 # ---------------------------------------------------------------------------
 # Major roads -- distance to the real arterial/highway a property actually
-# connects to. Derived from the driving route already computed in
-# fetch_nearest_towns (see _major_road_from_steps above) rather than
-# matching against a fixed, inevitably-incomplete list of named Kenyan
-# roads. Works for any location, and makes zero extra API calls of its own
-# -- it just reads what fetch_nearest_towns (which MUST run first -- see
-# enrich_location_cell's step order) already stored on the rank-1 town.
+# connects to. Derived from the driving routes already computed in
+# fetch_nearest_towns (see _major_road_from_step_records above) rather
+# than matching against a fixed, inevitably-incomplete list of named
+# Kenyan roads. Works for any location, and makes zero extra API calls of
+# its own -- it just reads what fetch_nearest_towns (which MUST run first
+# -- see enrich_location_cell's step order) already stored, checking
+# every nearby town's route rather than only the nearest one.
 # ---------------------------------------------------------------------------
 
 def fetch_major_road_context(cell: LocationCell):
     towns = cell.nearest_towns or []
-    nearest = next((t for t in towns if t.get("rank") == 1), None)
-
-    best_name = nearest.get("major_road_name") if nearest else None
-    best_distance = nearest.get("major_road_distance_m") if nearest else None
+    candidates = [
+        (t["major_road_name"], t["major_road_distance_m"], t.get("major_road_tier", "named"))
+        for t in towns
+        if t.get("major_road_name") and t.get("major_road_distance_m") is not None
+    ]
+    # Prefer a genuinely classified major/trunk road across EVERY nearby
+    # town's route -- not just the nearest town's, since that one alone
+    # is often too short to ever cross a real highway. Fall back to the
+    # closest candidate of any tier only if nothing classified as major.
+    major_only = [c for c in candidates if c[2] == "major"]
+    pool = major_only or candidates
+    best_name, best_distance, _tier = min(pool, key=lambda c: c[1]) if pool else (None, None, None)
 
     cell.nearest_major_road_name = best_name
     cell.nearest_major_road_distance_m = best_distance
