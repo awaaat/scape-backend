@@ -246,22 +246,18 @@ class PinSubmitView(APIView):
             wallet_applied = Decimal(str(PROPERTY_REPORT_PRICE_KES))
             remainder = Decimal("1")
 
+        # No Paystack call here -- that's what used to stall this response.
+        # See ReportCheckoutView below; frontend calls it right after this
+        # returns, as its own separately-timed-out request.
         report = PropertyReport.objects.create(
             pin=pin, status="awaiting_payment", is_free_tier=False,
             price_charged_kes=PROPERTY_REPORT_PRICE_KES,
             wallet_applied_kes=wallet_applied if wallet_applied > 0 else None,
         )
-        authorization_url, error = _initiate_report_payment(report, amount=remainder)
-        if error:
-            return Response(
-                {"report_id": str(report.id), "status": report.status, "message": error},
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
         return Response(
             {
                 "report_id": str(report.id),
                 "status": report.status,
-                "checkout_url": authorization_url,
                 "amount_kes": str(remainder),
                 "wallet_applied_kes": str(wallet_applied) if wallet_applied > 0 else None,
                 "message": "You've used all your free reports on this device. Complete payment to generate this report.",
@@ -529,3 +525,57 @@ class ReportCancelView(APIView):
         _credit_back_report(report, reason="user cancelled")
         report.refresh_from_db()
         return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
+
+
+class ReportCheckoutView(APIView):
+    """POST /api/property/reports/<id>/checkout/ -- the ONLY place that
+    calls Paystack for a report payment. Split out of PinSubmitView.post
+    so a live third-party call never blocks report submission itself."""
+
+    def post(self, request, report_id):
+        report = get_object_or_404(
+            PropertyReport.objects.select_related("pin__broker__user"), pk=report_id,
+        )
+
+        user = getattr(request, "user", None)
+        if report.pin.broker.user_id and user is not None and user.is_authenticated and report.pin.broker.user_id != user.pk:
+            return Response({"error": "This report does not belong to you."}, status=status.HTTP_403_FORBIDDEN)
+
+        if report.status != "awaiting_payment":
+            return Response(
+                {"error": f"This report isn't awaiting payment (current status: {report.status})."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if report.paystack_reference:
+            from payments.models import PaystackTransaction
+            existing = PaystackTransaction.objects.filter(reference=report.paystack_reference).first()
+            if existing and existing.authorization_url and existing.status == "pending":
+                return Response(
+                    {
+                        "report_id": str(report.id), "status": report.status,
+                        "checkout_url": existing.authorization_url,
+                        "message": "Complete payment to generate this report.",
+                    },
+                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                )
+
+        wallet_applied = report.wallet_applied_kes or Decimal("0")
+        remainder = Decimal(str(report.price_charged_kes)) - wallet_applied
+        if remainder <= 0:
+            remainder = Decimal("1")
+
+        authorization_url, error = _initiate_report_payment(report, amount=remainder)
+        if error:
+            return Response(
+                {"report_id": str(report.id), "status": report.status, "error": error, "message": error},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(
+            {
+                "report_id": str(report.id), "status": report.status,
+                "checkout_url": authorization_url, "amount_kes": str(remainder),
+                "message": "Complete payment to generate this report.",
+            },
+            status=status.HTTP_402_PAYMENT_REQUIRED,
+        )

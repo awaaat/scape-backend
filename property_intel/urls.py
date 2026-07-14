@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import OTPRequestView, OTPVerifyView, PinSubmitView, ReportCancelView, ReportListView, ReportRetryView, ReportStatusView, UsageView
+from .views import OTPRequestView, OTPVerifyView, PinSubmitView, ReportCancelView, ReportCheckoutView, ReportListView, ReportRetryView, ReportStatusView, UsageView
 
 urlpatterns = [
     path("property/pins/", PinSubmitView.as_view(), name="property-pin-submit"),
@@ -11,4 +11,5 @@ urlpatterns = [
     path("property/reports/<uuid:report_id>/", ReportStatusView.as_view(), name="property-report-status"),
     path("property/reports/<uuid:report_id>/retry/", ReportRetryView.as_view(), name="property-report-retry"),
     path("property/reports/<uuid:report_id>/cancel/", ReportCancelView.as_view(), name="property-report-cancel"),
+    path("property/reports/<uuid:report_id>/checkout/", ReportCheckoutView.as_view(), name="property-report-checkout"),
 ]

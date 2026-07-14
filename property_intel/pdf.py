@@ -34,6 +34,17 @@ NEARBY_RING_METERS = 3000
 
 PLUS_CODE_RE = re.compile(r"^[A-Z0-9]{4,8}\+[A-Z0-9]{2,3}")
 
+# Every sample report showed exactly 20 for schools/hospitals/banks/etc at
+# 5km regardless of location (Nairobi CBD, Bungoma, two different Ruiru
+# pins) -- that's a fetch cap in google_client.py being displayed as a
+# true final count. Until pagination is fixed at the source, show "20+"
+# instead of a bare "20" so the report never implies a false precision.
+AMENITY_FETCH_CAP = 20
+
+
+def _count_label(n, cap=AMENITY_FETCH_CAP):
+    return f"{n}+" if n >= cap else str(n)
+
 PRICE_BENCHMARKS = {
     "ruiru": {
         "price_per_acre_kes": 40_500_000,
@@ -330,8 +341,9 @@ def _get_named_amenities_text(cell, category, label, max_names=3, include_distan
             if not include_distance:
                 return text
             remaining = len(sorted_entries) - len(top)
+            remaining_label = _count_label(remaining) if len(sorted_entries) >= AMENITY_FETCH_CAP else str(remaining)
             suffix = f" (the nearest just {closest} away"
-            suffix += f", plus {remaining} more nearby)" if remaining > 0 else ")"
+            suffix += f", plus {remaining_label} more nearby)" if remaining > 0 else ")"
             return text + suffix
     return None
 
@@ -495,17 +507,18 @@ def _investment_contributors(cell, investment_score):
 
     strong = sorted([r for r in density_rows if r[3] >= 10], key=lambda r: -r[3])[:2]
     for label, c1, c3, c5 in strong:
-        reasons.append(("strength", f"{c5} {label.lower()} within 5 km"))
+        reasons.append(("strength", f"{_count_label(c5)} {label.lower()} within 5 km"))
 
     if getattr(cell, "on_paved_road", None) is True:
         road_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
         if road_name and cell.nearest_road_distance_m:
             reasons.append(("strength", f"~{cell.nearest_road_distance_m}m from {road_name}"))
         elif road_name:
-            reasons.append(("strength", f"On or near {road_name}"))
+            reasons.append(("strength", f"Near {road_name}"))
+        elif cell.nearest_road_distance_m:
+            reasons.append(("strength", f"Paved road nearby, ~{cell.nearest_road_distance_m}m away (name not resolved)"))
         else:
-            road_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
-            reasons.append(("strength", f"On or near a mapped access road{road_bit}"))
+            reasons.append(("strength", "Paved road detected nearby (exact name and distance not resolved)"))
     elif getattr(cell, "on_paved_road", None) is False:
         reasons.append(("watch", "No mapped road detected nearby -- verify physical access before buying"))
 
@@ -1110,7 +1123,7 @@ def render_report_pdf(pin, cell):
             story.append(Spacer(1, 2 * mm))
             density_data = [["Category", "Within 1km", "Within 3km", "Within 5km"]]
             for label, c1, c3, c5 in density_rows:
-                density_data.append([label, str(c1), str(c3), str(c5)])
+                density_data.append([label, _count_label(c1), _count_label(c3), _count_label(c5)])
             density_table = Table(density_data, colWidths=[70 * mm, 36 * mm, 37 * mm, 37 * mm])
             density_table.setStyle(TableStyle([
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -1143,9 +1156,10 @@ def render_report_pdf(pin, cell):
                 if road_name:
                     dist_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
                     details.append(f"Road Access: {road_name}{dist_bit}")
+                elif cell.nearest_road_distance_m:
+                    details.append(f"Road Access: Paved road nearby, ~{cell.nearest_road_distance_m}m away (name not resolved)")
                 else:
-                    road_bit = f" (~{cell.nearest_road_distance_m}m to nearest mapped road)" if cell.nearest_road_distance_m else ""
-                    details.append(f"Road Access: On or near a mapped road{road_bit}")
+                    details.append("Road Access: Paved road detected nearby (exact name and distance not resolved)")
             else:
                 details.append("Road Access: No mapped road detected nearby -- verify physical access before purchase")
 
