@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Property Location Report — {{ location_line }}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --paper:#F1ECE0;
+    --paper-deep:#E7E0CE;
+    --card:#FFFDF8;
+    --ink:#1D2B1F;
+    --ink-soft:#3E4A3D;
+    --soil:#A6541D;
+    --soil-deep:#8A4417;
+    --seal:#B8892B;
+    --sage:#6E7A63;
+    --sage-line:#C9C3AC;
+    --good:#3D6B45;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--paper);}
+  body{
+    font-family:'IBM Plex Sans',sans-serif;
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    padding:32px 16px 64px;
+  }
+
+  .sheet{
+    max-width:760px;
+    margin:0 auto;
+    background:var(--card);
+    border:1px solid var(--sage-line);
+    box-shadow:0 1px 0 rgba(29,43,31,0.04), 0 18px 40px -24px rgba(29,43,31,0.35);
+    position:relative;
+  }
+
+  .sheet::before{
+    content:"";
+    position:absolute;
+    top:0;left:0;right:0;
+    height:6px;
+    background:repeating-linear-gradient(90deg, var(--soil) 0 14px, transparent 14px 22px);
+    opacity:0.55;
+  }
+
+  /* ===== MASTHEAD ===== */
+  .masthead{
+    padding:34px 36px 22px;
+    border-bottom:1px solid var(--sage-line);
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:20px;
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--soil-deep);
+    font-weight:600;
+    margin:0 0 8px;
+  }
+  h1.doc-title{
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    font-size:30px;
+    line-height:1.1;
+    margin:0 0 10px;
+    color:var(--ink);
+  }
+  .doc-sub{
+    font-size:13.5px;
+    color:var(--ink-soft);
+    margin:0;
+    max-width:38ch;
+  }
+  .seal{
+    flex:0 0 auto;
+    width:88px;height:88px;
+    border-radius:50%;
+    border:1.5px dashed var(--seal);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    transform:rotate(-6deg);
+  }
+  .seal-inner{
+    width:72px;height:72px;
+    border-radius:50%;
+    border:1px solid var(--seal);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    font-family:'IBM Plex Mono',monospace;
+    color:var(--seal);
+    line-height:1.15;
+  }
+  .seal-inner .top{font-size:8px;letter-spacing:0.08em;text-transform:uppercase;}
+  .seal-inner .mid{font-size:15px;font-weight:600;margin:2px 0;}
+  .seal-inner .bot{font-size:7px;letter-spacing:0.06em;text-transform:uppercase;}
+
+  /* ===== QUICK FACTS STRIP ===== */
+  .facts-strip{
+    display:grid;
+    border-bottom:1px solid var(--sage-line);
+  }
+  .fact{
+    padding:16px 18px;
+    border-right:1px solid var(--sage-line);
+  }
+  .fact:last-child{border-right:none;}
+  .fact-label{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:9.5px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--sage);
+    margin-bottom:5px;
+  }
+  .fact-value{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:15px;
+    font-weight:600;
+    color:var(--ink);
+  }
+
+  /* ===== SECTION ===== */
+  .section{
+    padding:26px 36px;
+    border-bottom:1px solid var(--sage-line);
+  }
+  .section:last-of-type{border-bottom:none;}
+  .section-head{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-bottom:14px;
+  }
+  .section-title{
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    font-size:17px;
+    color:var(--ink);
+    margin:0;
+  }
+  .copy-btn{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--soil-deep);
+    border:1px solid var(--soil);
+    padding:5px 10px;
+    border-radius:2px;
+    background:transparent;
+    white-space:nowrap;
+  }
+
+  .listing-copy{
+    font-size:14.5px;
+    line-height:1.75;
+    color:var(--ink-soft);
+    margin:0;
+  }
+  .evid{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    color:var(--soil-deep);
+    background:rgba(166,84,29,0.08);
+    border:1px solid rgba(166,84,29,0.35);
+    border-radius:20px;
+    padding:1px 8px;
+    white-space:nowrap;
+  }
+
+  .highlights{
+    list-style:none;
+    margin:0;padding:0;
+    display:grid;
+    gap:9px;
+  }
+  .highlights li{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-size:13.5px;
+    color:var(--ink);
+  }
+  .chip{
+    flex:0 0 auto;
+    width:20px;height:20px;
+    border-radius:50%;
+    border:1px solid var(--good);
+    display:flex;align-items:center;justify-content:center;
+    font-size:11px;
+    color:var(--good);
+  }
+  .highlights .dist{
+    margin-left:auto;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    color:var(--sage);
+  }
+
+  table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:13px;
+  }
+  th{
+    text-align:left;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--sage);
+    font-weight:600;
+    padding:0 0 8px;
+    border-bottom:1px solid var(--sage-line);
+  }
+  td{
+    padding:9px 0;
+    border-bottom:1px solid var(--paper-deep);
+    color:var(--ink-soft);
+  }
+  td.name{color:var(--ink);font-weight:500;}
+  td.mono{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--soil-deep);text-align:right;}
+
+  .stars{color:var(--seal);letter-spacing:1px;}
+
+  .maps-row{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:10px;
+  }
+  .map-tile{
+    border:1px solid var(--sage-line);
+    background:var(--paper);
+    border-radius:3px;
+    padding:16px 8px;
+    text-align:center;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;
+    color:var(--ink-soft);
+    letter-spacing:0.02em;
+  }
+  .map-tile .ic{font-size:20px;display:block;margin-bottom:6px;}
+  .map-tile img{width:100%;height:auto;border-radius:2px;margin-bottom:6px;}
+
+  .footer{
+    padding:26px 36px 32px;
+    background:var(--paper-deep);
+  }
+  .disclaimer{
+    font-size:11px;
+    line-height:1.6;
+    color:var(--ink-soft);
+    margin:0 0 16px;
+  }
+  .brand-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:10px;
+  }
+  .brand{
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    font-size:14px;
+    color:var(--ink);
+  }
+  .contact{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:var(--soil-deep);
+  }
+</style>
+</head>
+<body>
+
+<div class="sheet">
+
+  <!-- MASTHEAD -->
+  <div class="masthead">
+    <div>
+      <p class="eyebrow">Official Listing Document &middot; Ref #{{ ref }}</p>
+      <h1 class="doc-title">Property Location Report</h1>
+      <p class="doc-sub">{{ location_line }} &mdash; generated {{ generated_date }}</p>
+    </div>
+    {% if seal %}
+    <div class="seal">
+      <div class="seal-inner">
+        <span class="top">{{ seal.top }}</span>
+        <span class="mid">{{ seal.mid }}</span>
+        <span class="bot">{{ seal.bot }}</span>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- QUICK FACTS -->
+  {% if facts %}
+  <div class="facts-strip" style="grid-template-columns:repeat({{ facts|length }},1fr);">
+    {% for f in facts %}
+    <div class="fact">
+      <div class="fact-label">{{ f.label }}</div>
+      <div class="fact-value">{{ f.value }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- LISTING DESCRIPTION -->
+  <div class="section">
+    <div class="section-head">
+      <h2 class="section-title">Listing Description</h2>
+      <button class="copy-btn">Copy text</button>
+    </div>
+    <p class="listing-copy">{{ description_html | safe }}</p>
+  </div>
+
+  <!-- HIGHLIGHTS -->
+  {% if highlights %}
+  <div class="section">
+    <h2 class="section-title" style="margin-bottom:14px;">Location Highlights</h2>
+    <ul class="highlights">
+      {% for h in highlights %}
+      <li><span class="chip">&#10003;</span> {{ h.text }} <span class="dist">{{ h.dist }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <!-- SUITABILITY -->
+  {% if suitability %}
+  <div class="section">
+    <h2 class="section-title" style="margin-bottom:14px;">Best Suited For</h2>
+    <table>
+      <tr><th>Use</th><th>Evidence</th><th style="text-align:right;">Fit</th></tr>
+      {% for row in suitability %}
+      <tr>
+        <td class="name">{{ row.name }}</td>
+        <td>{{ row.evidence }}</td>
+        <td class="mono stars">{{ '\u2605' * row.stars }}{{ '\u2606' * (5 - row.stars) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- LANDMARKS -->
+  {% if landmarks %}
+  <div class="section">
+    <h2 class="section-title" style="margin-bottom:14px;">Nearby Landmarks</h2>
+    <table>
+      <tr><th>Landmark</th><th style="text-align:right;">Distance</th></tr>
+      {% for lm in landmarks %}
+      <tr><td class="name">{{ lm.name }}</td><td class="mono">{{ lm.distance }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- MAPS -->
+  <div class="section">
+    <h2 class="section-title" style="margin-bottom:14px;">Maps &amp; Visuals</h2>
+    <div class="maps-row">
+      <div class="map-tile"><span class="ic">&#128205;</span>Pin</div>
+      <div class="map-tile">
+        {% if satellite_data_uri %}
+        <img src="{{ satellite_data_uri }}" alt="Satellite view">
+        {% else %}
+        <span class="ic">&#128752;</span>
+        {% endif %}
+        Satellite
+      </div>
+      <div class="map-tile">
+        {% if street_view_data_uri %}
+        <img src="{{ street_view_data_uri }}" alt="Street view">
+        {% else %}
+        <span class="ic">&#128694;</span>
+        {% endif %}
+        Street view
+      </div>
+      <div class="map-tile">
+        {% if qr_data_uri %}
+        <img src="{{ qr_data_uri }}" alt="QR code">
+        {% else %}
+        <span class="ic">&#9638;</span>
+        {% endif %}
+        QR code
+      </div>
+    </div>
+    <p class="listing-copy" style="margin-top:12px;font-size:12px;">
+      <a href="{{ view_url }}" style="color:var(--soil-deep);font-weight:600;">View Pin on Google Maps</a>
+      &nbsp;&nbsp;|&nbsp;&nbsp;
+      <a href="{{ directions_url }}" style="color:var(--soil-deep);font-weight:600;">Get Directions &rarr;</a>
+    </p>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <p class="disclaimer">
+      Generated from publicly available location and infrastructure data to help brokers write
+      accurate, evidence-backed listings quickly. Not a valuation or legal due diligence — verify
+      independently before a transaction.
+    </p>
+    <div class="brand-row">
+      <span class="brand">Scape Property Intelligence</span>
+      <span class="contact">{{ contact_line }}</span>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
