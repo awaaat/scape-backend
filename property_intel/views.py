@@ -518,9 +518,9 @@ class ReportCancelView(APIView):
         if report.pin.broker.user_id and user is not None and user.is_authenticated and report.pin.broker.user_id != user.pk:
             return Response({"error": "This report does not belong to you."}, status=status.HTTP_403_FORBIDDEN)
 
-        if report.status not in ("pending", "generating"):
+        if report.status not in ("pending", "generating", "awaiting_payment"):
             return Response(
-                {"error": f"Only a pending or generating report can be cancelled (current status: {report.status})."},
+                {"error": f"Only a pending, generating, or awaiting-payment report can be cancelled (current status: {report.status})."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

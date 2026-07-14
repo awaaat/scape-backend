@@ -1043,6 +1043,86 @@ def fetch_text_search_amenities(cell: LocationCell):
 # Ring radii (metres) and bearings (degrees, 0=N) sampled around the
 # property. 6 rings x 12 bearings + the center point = 73 points, well
 # under the Roads API's 100-point-per-request limit.
+# ---------------------------------------------------------------------------
+# OSM Overpass -- the ONLY source here with real road classification
+# (highway=motorway/trunk/primary/secondary tags). Google's Roads/Places
+# APIs return human names but never this. Tried before the Google-based
+# ring search below. Public Overpass instance -- free, no key, but shared
+# infrastructure: expect occasional slowness/rate-limiting under load.
+# Self-hosting (Geofabrik Kenya extract + local Overpass) is the
+# production-scale upgrade path if this becomes a bottleneck.
+# ---------------------------------------------------------------------------
+OSM_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OSM_MAJOR_HIGHWAY_TIERS = ("motorway", "trunk", "primary", "secondary")
+OSM_SEARCH_RADII_M = [5000, 10000, 20000]
+OSM_REQUEST_TIMEOUT_SECONDS = 15
+
+
+def _point_to_polyline_distance_m(lat0, lng0, nodes):
+    """nodes: list of {'lat':..,'lon':..} dicts describing a way's geometry
+    (as returned by Overpass 'out geom'). Approximates point-to-polyline
+    distance as the minimum distance to any vertex -- adequate at these
+    search radii since OSM way segments are typically short relative to
+    5-20km rings; a true point-to-segment projection would be marginally
+    more precise but isn't worth the complexity here."""
+    return min(_haversine_m(lat0, lng0, n["lat"], n["lon"]) for n in nodes if "lat" in n and "lon" in n)
+
+
+def _query_osm_major_roads(lat0, lng0, cell):
+    """
+    Queries Overpass for real highway=motorway/trunk/primary/secondary
+    ways within an expanding radius. Returns (name, distance_m, highway_tag)
+    for the single nearest classified-major road, or (None, None, None) if
+    OSM has no coverage in range or the request fails -- callers must fall
+    back to the Google-based path in that case, never invent a distance.
+    """
+    highway_filter = "|".join(OSM_MAJOR_HIGHWAY_TIERS)
+    for radius_m in OSM_SEARCH_RADII_M:
+        query = (
+            f'[out:json][timeout:{OSM_REQUEST_TIMEOUT_SECONDS}];'
+            f'way(around:{radius_m},{lat0},{lng0})["highway"~"^({highway_filter})$"];'
+            f'out geom;'
+        )
+        try:
+            resp = requests.post(
+                OSM_OVERPASS_URL, data={"data": query}, timeout=OSM_REQUEST_TIMEOUT_SECONDS,
+            )
+            succeeded = resp.status_code == 200
+            data = resp.json() if succeeded else {}
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning("OSM Overpass query failed for cell %s at %sm: %s", cell.geohash, radius_m, exc)
+            _log_call("osm_overpass", cell, {"radius_m": radius_m}, None, False)
+            continue
+        else:
+            _log_call("osm_overpass", cell, {"radius_m": radius_m}, resp.status_code, succeeded)
+
+        if not succeeded:
+            continue
+
+        elements = data.get("elements", [])
+        if not elements:
+            continue  # nothing at this radius -- widen and try again
+
+        best = None  # (name, distance_m, tier)
+        for way in elements:
+            geometry = way.get("geometry") or []
+            if not geometry:
+                continue
+            tags = way.get("tags", {})
+            tier = tags.get("highway")
+            name = tags.get("name") or tags.get("ref")
+            if not name:
+                continue
+            distance_m = _point_to_polyline_distance_m(lat0, lng0, geometry)
+            if best is None or distance_m < best[1]:
+                best = (name, distance_m, tier)
+
+        if best:
+            return best
+
+    return None, None, None
+
+
 MAJOR_ROAD_SEARCH_RADII_M = [500, 1000, 2000, 4000, 8000, 15000]
 MAJOR_ROAD_SEARCH_BEARINGS = list(range(0, 360, 30))
 
@@ -1070,6 +1150,26 @@ def fetch_major_road_context(cell: LocationCell):
     lat0 = float(cell.center_latitude)
     lng0 = float(cell.center_longitude)
 
+    # OSM tried FIRST -- it's the only source here with real
+    # highway=motorway/trunk/primary/secondary classification. If it
+    # succeeds, return immediately with a genuinely proximity-based result.
+    osm_name, osm_distance_m, osm_tier = _query_osm_major_roads(lat0, lng0, cell)
+    if osm_name:
+        cell.nearest_major_road_name = osm_name
+        cell.nearest_major_road_distance_m = int(osm_distance_m)
+        cell.major_road_context_fetched_at = timezone.now()
+        cell.save(update_fields=[
+            "nearest_major_road_name", "nearest_major_road_distance_m", "major_road_context_fetched_at",
+        ])
+        logger.info(
+            "Major road for cell %s resolved via OSM: %s (highway=%s, %sm)",
+            cell.geohash, osm_name, osm_tier, osm_distance_m,
+        )
+        return cell
+
+    # OSM had no coverage in range or the request failed -- fall back to
+    # the existing Google Roads-API ring search + route-inferred last
+    # resort (already distance-capped by patch5).
     points = [(lat0, lng0)]
     for radius_m in MAJOR_ROAD_SEARCH_RADII_M:
         for bearing in MAJOR_ROAD_SEARCH_BEARINGS:
@@ -1135,6 +1235,16 @@ def fetch_major_road_context(cell: LocationCell):
         major_only = [c for c in candidates if c[2] == "major"]
         pool = major_only or candidates
         best_name, best_distance, _tier = min(pool, key=lambda c: c[1]) if pool else (None, None, None)
+
+        # Route-offset distance, not real proximity -- discard anything
+        # beyond the ring search's own max radius rather than show it.
+        if best_distance is not None and best_distance > max(MAJOR_ROAD_SEARCH_RADII_M):
+            logger.info(
+                "Major-road fallback for cell %s found %s but at %sm (route-offset, not "
+                "real proximity) -- discarding rather than displaying a misleading distance.",
+                cell.geohash, best_name, best_distance,
+            )
+            best_name, best_distance = None, None
 
     cell.nearest_major_road_name = best_name
     cell.nearest_major_road_distance_m = best_distance
