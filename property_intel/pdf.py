@@ -140,14 +140,20 @@ def _label_from_field_name(field_name):
 
 def _discover_amenity_fields(cell):
     """Every model field starting with 'nearby_' that's a non-empty list --
-    generic, so any future amenity category shows up with zero changes."""
+    generic, so any future amenity category shows up with zero changes.
+    Entries with distance_m is None (suppressed by the OSM verification
+    cascade in amenity_verification.py -- coincident-geocode entries that
+    couldn't be confidently verified) are excluded here, at the single
+    choke point every report section reads through. This is the only
+    place that filter needs to live."""
     found = []
     for field in cell._meta.get_fields():
         name = getattr(field, "name", "")
         if name.startswith("nearby_"):
-            value = getattr(cell, name, None)
-            if value:
-                found.append((_label_from_field_name(name), value))
+            value = getattr(cell, name, None) or []
+            filtered = [e for e in value if e.get("distance_m") is not None]
+            if filtered:
+                found.append((_label_from_field_name(name), filtered))
     return found
 
 
