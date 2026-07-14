@@ -190,6 +190,36 @@ def _retry_or_fail(task, report_id, exc):
         logger.error("Report %s permanently failed after %s retries: %s", report_id, MAX_RETRIES, exc)
 
 
+REPORT_RETENTION_DAYS = 7
+
+
+@shared_task
+def purge_expired_reports():
+    """
+    Scheduled task -- wire into CELERY_BEAT_SCHEDULE to run once a day.
+    Deletes PropertyReport rows (and their stored PDFs) once they're
+    older than REPORT_RETENTION_DAYS. Only touches reports that actually
+    finished one way or another (ready/failed/cancelled) -- never deletes
+    something still pending/generating/awaiting payment, no matter how
+    old, since that would silently destroy an in-flight report.
+    """
+    cutoff = timezone.now() - timedelta(days=REPORT_RETENTION_DAYS)
+    expired = PropertyReport.objects.filter(
+        status__in=["ready", "failed", "cancelled"],
+        created_at__lt=cutoff,
+    )
+
+    count = 0
+    for report in expired.iterator():
+        if report.pdf_storage_path:
+            storage.delete_object(report.pdf_storage_path)
+        report.delete()
+        count += 1
+
+    if count:
+        logger.info("purge_expired_reports: deleted %s report(s) older than %s days.", count, REPORT_RETENTION_DAYS)
+
+
 @shared_task
 def sweep_stuck_reports():
     """

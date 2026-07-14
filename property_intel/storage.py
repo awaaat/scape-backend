@@ -69,3 +69,31 @@ def upload_image_bytes(raw_bytes, path, content_type="image/jpeg"):
 
 def upload_pdf_bytes(raw_bytes, path, content_type="application/pdf"):
     return _upload(raw_bytes, path, content_type)
+
+
+def delete_object(path):
+    """
+    Deletes one object from the bucket. Used by purge_expired_reports to
+    actually free storage, not just clear the DB row -- a silently
+    orphaned PDF still costs Supabase storage forever. Non-fatal: logs
+    and returns False on failure rather than raising, since a report row
+    being deleted should never block on storage cleanup succeeding.
+    """
+    if not path:
+        return False
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        logger.warning("Cannot delete storage object %s -- storage not configured.", path)
+        return False
+
+    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{path}"
+    headers = {"Authorization": f"Bearer {SUPABASE_SERVICE_KEY}"}
+    try:
+        resp = requests.delete(url, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
+    except requests.RequestException as exc:
+        logger.warning("Storage delete failed for %s: %s", path, exc)
+        return False
+
+    if resp.status_code in (200, 204):
+        return True
+    logger.warning("Storage delete rejected for %s: HTTP %s: %s", path, resp.status_code, resp.text[:300])
+    return False

@@ -247,6 +247,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "property_intel.tasks.sweep_stuck_reports",
         "schedule": 300.0,
     },
+    "purge-expired-property-reports": {
+        "task": "property_intel.tasks.purge_expired_reports",
+        "schedule": 86400.0,  # once a day
+    },
 }
 
 # ─── Paystack ───────────────────────────────────────────────────────

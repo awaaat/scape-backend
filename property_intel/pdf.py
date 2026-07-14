@@ -195,7 +195,25 @@ def _display_location_name(pin, cell):
     town, _ = _match_price_benchmark(cell)
     if town:
         return f"Near {_town_or_city_label(town)}, Kenya"
+    nearest_town = _nearest_town_summary(cell)
+    if nearest_town:
+        town_label, _minutes, _km = nearest_town
+        return f"Near {town_label}, Kenya"
     return f"{pin.latitude}, {pin.longitude}"
+
+
+def _town_qualified_road_name(cell, road_name):
+    """Appends the nearest resolved town/city to a road name so it's
+    unambiguous in the report -- 'Moi Avenue' exists in multiple Kenyan
+    towns, and a bare name reads as more specific than it actually is."""
+    if not road_name:
+        return road_name
+    nearest_town = _nearest_town_summary(cell)
+    if nearest_town:
+        town_label = nearest_town[0]
+        if town_label.split()[0].upper() not in road_name.upper():
+            return f"{road_name}, {town_label}"
+    return road_name
 
 
 def _score_accessibility(cell):
@@ -456,7 +474,7 @@ def _investment_contributors(cell, investment_score):
         reasons.append(("strength", f"{c5} {label.lower()} within 5 km"))
 
     if getattr(cell, "on_paved_road", None) is True:
-        road_name = getattr(cell, "nearest_road_name", None)
+        road_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
         if road_name and cell.nearest_road_distance_m:
             reasons.append(("strength", f"~{cell.nearest_road_distance_m}m from {road_name}"))
         elif road_name:
@@ -467,7 +485,7 @@ def _investment_contributors(cell, investment_score):
     elif getattr(cell, "on_paved_road", None) is False:
         reasons.append(("watch", "No mapped road detected nearby -- verify physical access before buying"))
 
-    major_name = getattr(cell, "nearest_major_road_name", None)
+    major_name = _town_qualified_road_name(cell, getattr(cell, "nearest_major_road_name", None))
     major_dist = getattr(cell, "nearest_major_road_distance_m", None)
     if major_name and major_dist:
         km = major_dist / 1000
@@ -1096,7 +1114,7 @@ def render_report_pdf(pin, cell):
 
         if getattr(cell, "on_paved_road", None) is not None:
             if cell.on_paved_road:
-                road_name = getattr(cell, "nearest_road_name", None)
+                road_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
                 if road_name:
                     dist_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
                     details.append(f"Road Access: {road_name}{dist_bit}")
@@ -1106,7 +1124,7 @@ def render_report_pdf(pin, cell):
             else:
                 details.append("Road Access: No mapped road detected nearby -- verify physical access before purchase")
 
-        major_name = getattr(cell, "nearest_major_road_name", None)
+        major_name = _town_qualified_road_name(cell, getattr(cell, "nearest_major_road_name", None))
         major_dist = getattr(cell, "nearest_major_road_distance_m", None)
         if major_name and major_dist:
             km = major_dist / 1000
@@ -1122,25 +1140,9 @@ def render_report_pdf(pin, cell):
         # Next Steps
         story.append(Paragraph("NEXT STEPS", styles['CustomHeading2']))
         story.append(Spacer(1, 2 * mm))
-        broker_email = getattr(getattr(pin, "broker", None), "email", None)
-        broker_phone = _broker_phone(pin)
-        whatsapp_link = _whatsapp_link(broker_phone)
-        tel_link = _tel_link(broker_phone)
-
-        contact_channels = []
-        if broker_email:
-            contact_channels.append(broker_email)
-        if whatsapp_link:
-            contact_channels.append(f'<link href="{whatsapp_link}"><font color="#1a7d3c"><b>WhatsApp {broker_phone}</b></font></link>')
-        if tel_link:
-            contact_channels.append(f'<link href="{tel_link}"><font color="#1a4d7d"><b>Call {broker_phone}</b></font></link>')
-
-        if contact_channels:
-            contact_bit = f" Contact the broker via {' or '.join(contact_channels)} to discuss pricing, site visits, or next steps."
-        else:
-            contact_bit = " Contact the broker who shared this report to discuss pricing, site visits, or next steps."
         story.append(Paragraph(
-            f"This report was generated via Scape Data Solutions.{contact_bit}",
+            "This report was generated via Scape Data Solutions. "
+            "Conduct independent due diligence before making investment decisions.",
             styles['JustifiedNormal']
         ))
         story.append(Spacer(1, 6 * mm))
