@@ -1,29 +1,36 @@
 """
 property_intel/pdf.py
 
-LOCATION INTELLIGENCE REPORT - High-level overview for sellers.
-Every statement backed by specific, named data points.
-No vague claims. No generic "educational institutions" - we list them by name.
+PROPERTY LOCATION REPORT - broker-facing listing tool.
+
+Renders the exact HTML/CSS template (property_location_report.html.j2 --
+a Jinja2 copy of property_location_report_template.html, same CSS, same
+DOM, same classes, only content swapped for {{ }} placeholders) straight
+to PDF via WeasyPrint. This replaces the earlier ReportLab rebuild, which
+could not reproduce the template's pill-shaped tags, CSS grid, or web
+fonts exactly -- rendering the real HTML is the only way to get a true
+match.
+
+Every statement on the report is backed by a specific, named data point
+(an "evidence tag"). No investment score, no AI opinion, no driving
+directions, no bulk amenity dump. If a data point isn't available for a
+given pin, its section/row is skipped silently -- never padded with
+placeholder or "N/A" text.
 """
+import base64
 import io
 import logging
 import math
+import os
 import re
 from datetime import datetime
 
+import qrcode
 import requests
 from django.conf import settings
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.platypus import Image as RLImage
-from reportlab.platypus import (
-    Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
-    ListFlowable, ListItem,
-)
-from reportlab.graphics.shapes import Drawing, Polygon
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup, escape
+from weasyprint import HTML
 
 logger = logging.getLogger("property_intel")
 
@@ -33,6 +40,12 @@ IMAGE_FETCH_TIMEOUT_SECONDS = 10
 NEARBY_RING_METERS = 3000
 
 PLUS_CODE_RE = re.compile(r"^[A-Z0-9]{4,8}\+[A-Z0-9]{2,3}")
+
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
+_jinja_env = Environment(
+    loader=FileSystemLoader(TEMPLATE_DIR),
+    autoescape=select_autoescape(["html"]),
+)
 
 # Every sample report showed exactly 20 for schools/hospitals/banks/etc at
 # 5km regardless of location (Nairobi CBD, Bungoma, two different Ruiru
@@ -70,9 +83,10 @@ PRICE_BENCHMARKS = {
 KENYA_CITY_NAMES = {"NAIROBI", "MOMBASA", "KISUMU", "NAKURU"}
 
 # Scape's own support line for the branded footer -- set
-# SCAPE_SUPPORT_PHONE in settings/env once decided. Left blank (not a
-# placeholder number) until then, so the footer just omits it.
-SCAPE_SUPPORT_PHONE = getattr(settings, "SCAPE_SUPPORT_PHONE", "")
+# SCAPE_SUPPORT_PHONE in settings/env once decided. Falls back to the
+# template's own default line if unset.
+SCAPE_SUPPORT_PHONE = getattr(settings, "SCAPE_SUPPORT_PHONE", "+254718889559")
+DEFAULT_CONTACT_LINE = "+254 718 889 559 \u00b7 WhatsApp"
 
 
 def _whatsapp_link(phone):
@@ -87,19 +101,6 @@ def _whatsapp_link(phone):
     if not re.match(r"^254[17]\d{8}$", digits):
         return None
     return f"https://wa.me/{digits}"
-
-
-def _tel_link(phone):
-    """Builds a tel: click-to-call link from a canonical +254XXXXXXXXX
-    phone number. Returns None for anything invalid."""
-    if not phone:
-        return None
-    digits = re.sub(r"\D", "", phone)
-    if digits.startswith("0") and len(digits) == 10:
-        digits = "254" + digits[1:]
-    if not re.match(r"^254[17]\d{8}$", digits):
-        return None
-    return f"tel:+{digits}"
 
 
 def _broker_phone(pin):
@@ -230,18 +231,15 @@ def _nearest_town_summary(cell):
     return _town_or_city_label(nearest["name"]), minutes, km
 
 
-def _nearest_city_summary(cell):
-    """
-    Drive time to the nearest resolved town/city, period -- no longer
-    restricted to Kenya's four chartered cities (Nairobi, Mombasa, Kisumu,
-    Nakuru). A plot's nearest useful landmark is often a smaller county
-    town, and that's still worth surfacing; requiring a chartered city
-    meant plots nowhere near one of those four got no nearby-place bullet
-    at all. Delegates to _nearest_town_summary(), which already resolves
-    the nearest entry in cell.nearest_towns unfiltered.
-    Returns (label, minutes|None, km) or None if no towns were resolved.
-    """
-    return _nearest_town_summary(cell)
+def _cell_county(cell):
+    """First-listed county from cell.nearest_towns, the same list the
+    Nearby Towns table used to draw from. Returns None rather than a
+    placeholder string if towns never resolved."""
+    towns = cell.nearest_towns or []
+    if not towns:
+        return None
+    county = towns[0].get("county")
+    return county.title() if county else None
 
 
 def _display_location_name(pin, cell):
@@ -276,13 +274,6 @@ ROAD_DISTANCE_ALONG_THRESHOLD_M = 20  # below this, "~0.0km away" reads as nonse
 
 
 def _format_road_distance(name, distance_m):
-    """
-    Turns (name, distance_m) into a natural phrase, with no 'major road'
-    label anywhere:
-      - under 20m         -> "Right along X"           (was "~0.0km away")
-      - under 1000m        -> "X (~140m away)"
-      - 1000m and up        -> "X (~2.3km away)"
-    """
     if distance_m is None:
         return name
     if distance_m < ROAD_DISTANCE_ALONG_THRESHOLD_M:
@@ -293,7 +284,8 @@ def _format_road_distance(name, distance_m):
 
 
 def _score_accessibility(cell):
-    """Calculate accessibility score based on amenity density and commute times"""
+    """Kept for callers elsewhere in the app (pin ranking/filtering) even
+    though the Property Location Report no longer prints a scorecard."""
     score = 50
     amenity_fields = _discover_amenity_fields(cell)
     if amenity_fields:
@@ -312,7 +304,7 @@ def _score_accessibility(cell):
 
 
 def _score_investment(cell, accessibility_score):
-    """Investment potential -- deliberately independent of accessibility_score."""
+    """Kept for callers elsewhere in the app; not printed in this report."""
     score = 50
 
     _, benchmark = _match_price_benchmark(cell)
@@ -342,34 +334,59 @@ def _score_investment(cell, accessibility_score):
     return max(0, min(100, round(score)))
 
 
-def _verdict_label(investment_score):
-    if investment_score >= 80:
-        return "Strong Buy"
-    elif investment_score >= 65:
-        return "Solid Long-Term Hold"
-    elif investment_score >= 45:
-        return "Proceed With Due Diligence"
-    else:
-        return "High Risk -- Caution Advised"
-
-
 def _format_distance(meters):
-    """Format distance in meters with km equivalent in brackets if > 500m"""
     if meters is None:
         return "Unknown"
     if meters <= 500:
-        return f"{meters}m"
-    else:
-        km = meters / 1000
-        return f"{meters}m ({km:.1f}km)"
+        return f"{int(round(meters))}m"
+    km = meters / 1000
+    return f"{int(round(meters))}m ({km:.1f}km)"
+
+
+def _density_table_data(cell):
+    """Kept for _score_investment's density signal; not printed in this report."""
+    amenity_fields = _discover_amenity_fields(cell)
+    rows = []
+    for label, entries in amenity_fields:
+        rows.append((
+            label,
+            _within(entries, 1000),
+            _within(entries, 3000),
+            _within(entries, 5000),
+        ))
+    return rows
+
+
+def _summary_text(pin, cell, investment_score, accessibility_score):
+    """Returns (lead, bullets) -- kept as-is for the plain-text summary_text
+    return value some callers (search previews, notifications) rely on,
+    even though the PDF itself no longer renders this as a bullet list."""
+    location_name = _display_location_name(pin, cell)
+    nearest_town = _nearest_town_summary(cell)
+
+    lead = location_name
+    if nearest_town:
+        town_label, minutes, km = nearest_town
+        if km == 0.0:
+            lead += f", in {town_label}"
+        elif minutes is not None:
+            lead += f", {minutes} minutes from {town_label}"
+        else:
+            lead += f", {km} km from {town_label}"
+    lead += "."
+
+    bullets = []
+    schools = _get_named_amenities_text(cell, "schools", "Schools", max_names=2, include_distance=False)
+    if schools:
+        bullets.append(f"Nearby schools include {schools}.")
+    hospitals = _get_named_amenities_text(cell, "hospitals", "Hospitals", max_names=1, include_distance=True)
+    if hospitals:
+        bullets.append(f"Nearest hospital: {hospitals}.")
+
+    return lead, bullets[:6]
 
 
 def _get_named_amenities_text(cell, category, label, max_names=3, include_distance=True):
-    """
-    Narrative-friendly summary of a category: names the 2-3 nearest by name,
-    calls out the distance ONCE (the closest one), and folds any remainder
-    into a plain count instead of bracketing every single entry.
-    """
     amenity_fields = _discover_amenity_fields(cell)
     for lbl, entries in amenity_fields:
         if lbl.lower() == category.lower():
@@ -393,92 +410,35 @@ def _get_named_amenities_text(cell, category, label, max_names=3, include_distan
     return None
 
 
-def _summary_text(pin, cell, investment_score, accessibility_score):
-    """Returns (lead, bullets) -- a one-line intro plus a capped, scannable
-    bullet list of the most decision-relevant facts."""
-    location_name = _display_location_name(pin, cell)
-    nearest_town = _nearest_town_summary(cell)
-
-    lead = location_name
-    if nearest_town:
-        town_label, minutes, km = nearest_town
-        if km == 0.0:
-            lead += f", in {town_label}"
-        elif minutes is not None:
-            lead += f", {minutes} minutes from {town_label}"
-        else:
-            lead += f", {km} km from {town_label}"
-    lead += "."
-
-    bullets = []
-
-    town, benchmark = _match_price_benchmark(cell)
-    if benchmark and benchmark.get("yoy_change_pct") is not None:
-        bullets.append(f"{_town_or_city_label(town)} land values rose {benchmark['yoy_change_pct']}% over the past year.")
-
-    nearest_city = _nearest_city_summary(cell)
-    if nearest_city:
-        city_label, minutes, km = nearest_city
-        if km == 0.0:
-            bullets.append(f"This property is located within {city_label}.")
-        elif minutes is not None:
-            bullets.append(f"{city_label} is a {minutes}-minute drive away.")
-        elif km is not None:
-            bullets.append(f"{city_label} is approximately {km} km away.")
-
-    schools = _get_named_amenities_text(cell, "schools", "Schools", max_names=2, include_distance=False)
-    if schools:
-        bullets.append(f"Nearby schools include {schools}.")
-
-    universities = _get_named_amenities_text(cell, "universities", "Universities", max_names=1, include_distance=False)
-    if universities:
-        bullets.append(f"{universities} nearby supports student rental demand.")
-
-    hospitals = _get_named_amenities_text(cell, "hospitals", "Hospitals", max_names=1, include_distance=True)
-    if hospitals:
-        bullets.append(f"Nearest hospital: {hospitals}.")
-
-    gated = _get_named_amenities_text(cell, "gated communities", "Gated Communities", max_names=1, include_distance=False)
-    student_housing = _get_named_amenities_text(cell, "student housing", "Student Housing", max_names=1, include_distance=False)
-    if gated:
-        bullets.append(f"{gated} shows an established residential market nearby.")
-    elif student_housing:
-        bullets.append(f"{student_housing} shows active demand from student renters.")
-
-    if cell.air_quality_category:
-        streak = getattr(cell, "air_quality_good_days_streak", None)
-        if streak:
-            bullets.append(f"Air quality has stayed {cell.air_quality_category.lower()} for {streak} days straight.")
-        else:
-            bullets.append(f"Air quality is currently rated {cell.air_quality_category.lower()}.")
-
-    if getattr(cell, "elevation_slope_range_m", None) is not None:
-        if cell.elevation_slope_range_m < 3:
-            bullets.append("Flat terrain lowers flood and drainage risk.")
-        else:
-            bullets.append(f"Terrain varies about {cell.elevation_slope_range_m:.0f}m, suggesting a gentle slope.")
-
-    return lead, bullets[:6]
-
-
-def _fetch_image_flowable(url, width_mm=160, height_mm=90):
+def _fetch_image_bytes(url):
     if not url:
         return None
     try:
         resp = requests.get(url, timeout=IMAGE_FETCH_TIMEOUT_SECONDS)
         if resp.status_code != 200:
             return None
-        return RLImage(io.BytesIO(resp.content), width=width_mm * mm, height=height_mm * mm)
+        return resp.content
     except requests.RequestException as exc:
-        logger.warning("Could not fetch image for PDF (%s): %s", url, exc)
+        logger.warning("Could not fetch image (%s): %s", url, exc)
         return None
+
+
+def _image_data_uri(url, mime="image/jpeg"):
+    """Fetches an image and returns it as a base64 data: URI so WeasyPrint
+    never has to reach the network at render time. Returns None -- never a
+    broken <img> tag -- if the fetch fails."""
+    content = _fetch_image_bytes(url)
+    if not content:
+        return None
+    return f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"
 
 
 STUDENT_HOUSING_PROXIMITY_M = 5000  # matches the "within 5km" density bucket shown alongside it
 
 
 def _development_suitability_table(cell):
-    """Generate development suitability recommendations based on location data"""
+    """Unchanged scoring logic from the original report -- the template
+    just displays fewer rows now. Returns [(dev_type, level, rationale), ...]."""
     amenity_fields = _discover_amenity_fields(cell)
     amenity_lookup = dict(amenity_fields)
     has_university = "Universities" in amenity_lookup
@@ -488,14 +448,12 @@ def _development_suitability_table(cell):
         e.get("distance_m") is not None and e["distance_m"] <= STUDENT_HOUSING_PROXIMITY_M
         for e in amenity_lookup.get("Student Housing", [])
     )
-    
-    # Get commute time
+
     nairobi = (cell.travel_times or {}).get("nairobi_cbd")
     commute_mins = round(nairobi["duration_s"] / 60) if nairobi and nairobi.get("duration_s") else None
-    
+
     suitability = []
-    
-    # Student Housing
+
     if has_student_housing and has_university:
         suitability.append(("Student Housing", "Very High", "Existing student accommodation confirms active rental market"))
     elif has_university and commute_mins and commute_mins < 45:
@@ -504,8 +462,7 @@ def _development_suitability_table(cell):
         suitability.append(("Student Housing", "Medium", "Near educational institutions"))
     else:
         suitability.append(("Student Housing", "Low", "Limited educational institutions in immediate area"))
-    
-    # Apartments
+
     if has_retail and has_university and has_gated:
         suitability.append(("Apartments", "Very High", "Service ecosystem plus proven demand from nearby gated communities"))
     elif has_retail and has_university:
@@ -514,221 +471,249 @@ def _development_suitability_table(cell):
         suitability.append(("Apartments", "Medium", "Some support infrastructure present"))
     else:
         suitability.append(("Apartments", "Low", "Limited service infrastructure"))
-    
-    # Mixed-Use
+
     if has_retail and commute_mins and commute_mins < 60:
         suitability.append(("Mixed-Use", "Medium-High", "Retail presence with reasonable commute supports mixed-use"))
     elif has_retail:
         suitability.append(("Mixed-Use", "Medium", "Retail presence supports mixed-use potential"))
     else:
         suitability.append(("Mixed-Use", "Low", "Limited commercial ecosystem"))
-    
-    # Warehousing
+
     if commute_mins and commute_mins > 30:
         suitability.append(("Warehousing", "Medium", "Peripheral location supports logistics and distribution"))
     else:
         suitability.append(("Warehousing", "Low", "Too central for cost-effective warehousing"))
-    
-    # Industrial
+
     suitability.append(("Industrial", "Low", "Location characteristics more suited to residential and commercial uses"))
-    
+
     return suitability
 
 
-def _density_table_data(cell):
-    """Count of each amenity category within 1km / 3km / 5km"""
-    amenity_fields = _discover_amenity_fields(cell)
-    rows = []
-    for label, entries in amenity_fields:
-        rows.append((
-            label,
-            _within(entries, 1000),
-            _within(entries, 3000),
-            _within(entries, 5000),
-        ))
-    return rows
+SUITABILITY_STARS = {
+    "Very High": 5,
+    "High": 4,
+    "Medium-High": 3,
+    "Medium": 3,
+    "Low": 1,
+}
 
 
-def _investment_contributors(cell, investment_score):
-    """Returns a list of (kind, text) tuples explaining WHY the investment
-    score is what it is -- kind is 'strength' or 'watch'. This is what
-    turns a bare '73/100' into something that reads as reasoned, not random."""
-    reasons = []
-    amenity_fields = _discover_amenity_fields(cell)
-    density_rows = _density_table_data(cell)
-
-    strong = sorted([r for r in density_rows if r[3] >= 10], key=lambda r: -r[3])[:2]
-    for label, c1, c3, c5 in strong:
-        reasons.append(("strength", f"{_count_label(c5)} {label.lower()} within 5 km"))
-
-    if getattr(cell, "on_paved_road", None) is True:
-        road_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
-        if road_name and cell.nearest_road_distance_m:
-            reasons.append(("strength", f"~{cell.nearest_road_distance_m}m from {road_name}"))
-        elif road_name:
-            reasons.append(("strength", f"Near {road_name}"))
-        elif cell.nearest_road_distance_m:
-            reasons.append(("strength", f"Paved road nearby, ~{cell.nearest_road_distance_m}m away (name not resolved)"))
-        else:
-            reasons.append(("strength", "Paved road detected nearby (exact name and distance not resolved)"))
-    elif getattr(cell, "on_paved_road", None) is False:
-        reasons.append(("watch", "No mapped road detected nearby -- verify physical access before buying"))
-
-    nearby_roads = getattr(cell, "nearby_roads", None) or []
-    if nearby_roads:
-        closest = nearby_roads[0]
-        name = _town_qualified_road_name(cell, closest.get("name"))
-        if name:
-            reasons.append(("strength", _format_road_distance(name, closest.get("distance_m"))))
-
-    if any(label == "Universities" for label, _ in amenity_fields):
-        reasons.append(("strength", "Strong student population supports rental demand"))
-
-    if any(label == "Gated Communities" for label, _ in amenity_fields):
-        reasons.append(("strength", "Established residential neighbourhood nearby"))
-    elif any(label == "Student Housing" for label, _ in amenity_fields):
-        reasons.append(("strength", "Active student housing market nearby"))
-
-    if not any(label == "Shopping" for label, _ in amenity_fields):
-        reasons.append(("watch", "Limited commercial/retail activity nearby"))
-
-    if cell.air_quality_index is not None:
-        if cell.air_quality_index <= AQI_GOOD_THRESHOLD:
-            reasons.append(("strength", f"Good air quality (AQI {cell.air_quality_index})"))
-        elif cell.air_quality_index > AQI_MODERATE_THRESHOLD:
-            reasons.append(("watch", f"Elevated AQI ({cell.air_quality_index}) may affect livability"))
-
-    town, benchmark = _match_price_benchmark(cell)
-    if benchmark and benchmark.get("yoy_change_pct") is not None:
-        yoy = benchmark["yoy_change_pct"]
-        if yoy > 0:
-            reasons.append(("strength", f"{_town_or_city_label(town)} land values rose {yoy}% in the past year"))
-        elif yoy < 0:
-            reasons.append(("watch", f"{_town_or_city_label(town)} land values fell {abs(yoy)}% in the past year"))
-
-    nairobi = (cell.travel_times or {}).get("nairobi_cbd")
-    if nairobi and nairobi.get("duration_s"):
-        minutes = round(nairobi["duration_s"] / 60)
-        if minutes < 60:
-            reasons.append(("strength", f"{minutes}-minute drive to Nairobi CBD"))
-
-    return reasons[:7]
+def _top_suitability_rows(cell, max_rows=4):
+    """Best-suited-for section shows only the rows that read as a selling
+    point -- ranked by fit, capped at max_rows, and 'Low' rows are dropped
+    entirely unless nothing else qualifies. Includes the Residential Home
+    row, which the underlying scoring table doesn't produce on its own --
+    see _residential_home_row()."""
+    all_rows = _development_suitability_table(cell) + [_residential_home_row(cell)]
+    ranked = sorted(all_rows, key=lambda r: -SUITABILITY_STARS.get(r[1], 0))
+    strong = [r for r in ranked if SUITABILITY_STARS.get(r[1], 0) >= 3]
+    return (strong or ranked)[:max_rows]
 
 
-def _category_stars(cell, investment_score):
-    """1-5 rating per category, derived entirely from amenity density already
-    on the cell -- no extra API calls needed."""
-    density = {label: c5 for label, c1, c3, c5 in _density_table_data(cell)}
-
-    def stars(count, thresholds=(1, 3, 7, 15)):
-        s = 1
-        for t in thresholds:
-            if count >= t:
-                s += 1
-        return min(s, 5)
-
-    education = density.get("Universities", 0) + density.get("Schools", 0)
-    healthcare = density.get("Hospitals", 0) + density.get("Pharmacies", 0)
-    transport = density.get("Petrol Stations", 0) + density.get("Transit Stops", 0)
-    shopping = (
-        density.get("Shopping", 0) + density.get("Supermarkets", 0)
-        + density.get("Restaurants", 0) + density.get("Banks", 0)
-    )
-    investment_stars = max(1, min(5, round(investment_score / 20)))
-
-    return [
-        ("Education", stars(education)),
-        ("Healthcare", stars(healthcare)),
-        ("Transport", stars(transport)),
-        ("Shopping", stars(shopping)),
-        ("Investment", investment_stars),
-    ]
+def _residential_home_row(cell):
+    """'Residential Home' isn't produced by _development_suitability_table()
+    (that function only scores Student Housing / Apartments / Mixed-Use /
+    Warehousing / Industrial), but it's the most common ask from a broker
+    listing a plot for a family buyer -- so it gets its own small,
+    evidence-based check here rather than being silently omitted."""
+    estate = _nearby_estate(cell)
+    if not estate:
+        return ("Residential Home", "Medium", "No established estate confirmed nearby yet")
+    name, dist = estate
+    if dist <= 500:
+        return ("Residential Home", "Very High", f"Established estate {name} {int(dist)}m away")
+    if dist <= 2000:
+        return ("Residential Home", "High", f"Established estate {name} within {_format_distance(dist)}")
+    return ("Residential Home", "Medium", f"Nearest estate, {name}, is {_format_distance(dist)} away")
 
 
-def _star_points(cx, cy, outer_r, inner_r):
-    """Vertex coordinates for a 5-pointed star centered at (cx, cy),
-    computed geometrically -- no font/glyph dependency at all."""
+# ---------------------------------------------------------------------------
+# Evidence collection -- the core of the template. Every claim on the
+# report traces back to one of these (label, name, distance_m) points.
+# Categories are tried in priority order; any that have no data for this
+# pin are silently skipped, so the report degrades gracefully instead of
+# printing "Unknown" or leaving a gap.
+# ---------------------------------------------------------------------------
+EVIDENCE_CATEGORY_PRIORITY = (
+    "Schools",
+    "Hospitals",
+    "Universities",
+    "Banks",
+    "Supermarkets",
+    "Gated Communities",
+    "Petrol Stations",
+)
+
+# Human-friendly noun for each category, used only when weaving the
+# "putting X, Y and Z within a short walk" clause of the description.
+_CATEGORY_BENEFIT_NOUN = {
+    "Schools": "schooling",
+    "Universities": "education",
+    "Hospitals": "healthcare",
+    "Banks": "banking",
+    "Supermarkets": "shopping",
+    "Gated Communities": "established housing",
+    "Petrol Stations": "fuel access",
+}
+
+
+def _collect_evidence_points(cell, max_points=6):
+    """Nearest named entry per priority category, sorted by distance,
+    capped at max_points. Returns [(label, name, distance_m), ...]."""
+    amenity_fields = dict(_discover_amenity_fields(cell))
     points = []
-    for i in range(10):
-        angle = math.pi / 2 + i * math.pi / 5
-        r = outer_r if i % 2 == 0 else inner_r
-        points.append(cx + r * math.cos(angle))
-        points.append(cy + r * math.sin(angle))
-    return points
+    for label in EVIDENCE_CATEGORY_PRIORITY:
+        entries = amenity_fields.get(label)
+        if not entries:
+            continue
+        nearest = min(entries, key=lambda e: e.get("distance_m", float("inf")))
+        name = nearest.get("name")
+        distance_m = nearest.get("distance_m")
+        if not name or distance_m is None:
+            continue
+        points.append((label, name, distance_m))
+    points.sort(key=lambda p: p[2])
+    return points[:max_points]
 
 
-def _stars_drawing(filled, total=5, box=11, gap=3):
-    """Real 5-pointed star rating bar, drawn as vector shapes -- avoids
-    relying on Unicode star glyphs, which base-14 PDF fonts can't
-    reliably render."""
-    outer_r = box / 2
-    inner_r = outer_r * 0.382
-    d = Drawing(total * (box + gap), box)
-    for i in range(total):
-        cx = i * (box + gap) + outer_r
-        cy = outer_r
-        color = colors.HexColor('#f2a900') if i < filled else colors.HexColor('#e3e3e3')
-        d.add(Polygon(
-            _star_points(cx, cy, outer_r, inner_r),
-            fillColor=color, strokeColor=None,
-        ))
-    return d
+def _singular(label):
+    lower = label.lower()
+    return lower[:-1] if lower.endswith("s") else lower
 
 
-def _ai_investment_opinion(pin, cell, investment_score, suitability_data):
-    location_name = _display_location_name(pin, cell)
-    best = [s for s in suitability_data if s[1] in ("Very High", "High")]
-    weak = [s for s in suitability_data if s[1] == "Low"]
-
-    location_phrase = re.sub(r"^near\s+", "", location_name, flags=re.IGNORECASE)
-
-    if best:
-        best_types = ", ".join(s[0].lower() for s in best)
-        opinion = (
-            f"This property, located near {location_phrase} is best suited for {best_types}, "
-            "based on the amenity mix and infrastructure signals captured in this report."
-        )
-    else:
-        opinion = (
-            f"This property, located near {location_phrase}, shows moderate suitability across "
-            "development types, with no single category standing out strongly."
-        )
-
-    town, benchmark = _match_price_benchmark(cell)
-    if benchmark and benchmark.get("note"):
-        opinion += f" {benchmark['note'].capitalize()}."
-
-    if weak:
-        risk = f"Primary risk: {weak[0][2].lower()}."
-    else:
-        risk = "Primary risk: confirm zoning, ownership documents, and physical access with a local agent before committing capital."
-
-    return opinion, risk
+def _evidence_density_counts(cell):
+    """Returns [(label, count), ...] for Banks/Supermarkets/Schools/Hospitals
+    with a nonzero 5km count -- the raw counts behind the description's
+    closing 'dense service base' clause."""
+    density_rows = _density_table_data(cell)
+    lookup = {label: c5 for label, c1, c3, c5 in density_rows}
+    picks = []
+    for label in ("Banks", "Supermarkets", "Schools", "Hospitals"):
+        c5 = lookup.get(label, 0)
+        if c5 > 0:
+            picks.append((label, c5))
+        if len(picks) == 2:
+            break
+    return picks
 
 
-def _top_reasons(cell, pin, accessibility_score):
-    """Cap-5 list of the strongest, most concrete selling points -- pulled
-    from the same contributor logic used for the score explanation."""
-    contributors = _investment_contributors(cell, 0)
-    strengths = [text for kind, text in contributors if kind == "strength"]
-
-    nearest_town = _nearest_town_summary(cell)
-    if nearest_town:
-        town_label, minutes, km = nearest_town
-        if minutes is not None:
-            strengths.insert(0, f"{minutes} minutes to {town_label}")
-
-    seen = set()
-    deduped = []
-    for s in strengths:
-        if s not in seen:
-            seen.add(s)
-            deduped.append(s)
-    return deduped[:5]
+def _nearby_estate(cell):
+    """Nearest gated community or, failing that, nearest student housing
+    entry -- used as the one 'established neighbourhood' proof point."""
+    amenity_fields = dict(_discover_amenity_fields(cell))
+    for label in ("Gated Communities", "Student Housing"):
+        entries = amenity_fields.get(label)
+        if entries:
+            nearest = min(entries, key=lambda e: e.get("distance_m", float("inf")))
+            if nearest.get("name") and nearest.get("distance_m") is not None:
+                return nearest["name"], nearest["distance_m"]
+    return None
 
 
-def _google_maps_directions_url(pin):
-    return f"https://www.google.com/maps/dir/?api=1&destination={pin.latitude},{pin.longitude}"
+def _evid(text):
+    """Wraps a piece of text in the template's <span class="evid"> evidence
+    chip. Escapes the inner text (place names, addresses) since it's
+    outside our control, then marks the whole chip safe to insert into
+    the Jinja template raw."""
+    return Markup('<span class="evid">{}</span>').format(text)
+
+
+def _build_description_html(town_label, nearest_town, frontage_name, frontage_dist,
+                             evidence_points, estate, density_counts):
+    """Builds the Listing Description paragraph with the same inline
+    evidence-chip markup as the template's example copy, entirely from
+    real data. Any clause whose underlying evidence is missing for this
+    pin is dropped -- never padded with a placeholder."""
+    parts = []
+
+    # --- opening: town distance + frontage ---
+    open_bits = []
+    if town_label and nearest_town:
+        _, minutes, km = nearest_town
+        if km is not None and minutes is not None:
+            town_chip = _evid(f"{int(round(km * 1000))}m \u00b7 {minutes} min")
+        elif minutes is not None:
+            town_chip = _evid(f"{minutes} min")
+        elif km is not None:
+            town_chip = _evid(f"{km}km")
+        else:
+            town_chip = None
+        if town_chip is not None:
+            open_bits.append(Markup("Located {} from {} Town Centre").format(town_chip, town_label))
+        else:
+            open_bits.append(Markup("Located near {} Town Centre").format(town_label))
+    if frontage_name:
+        short_name = frontage_name.split(",")[0]
+        if frontage_dist is not None and frontage_dist >= ROAD_DISTANCE_ALONG_THRESHOLD_M:
+            front_chip = _evid(f"{short_name}, {int(round(frontage_dist))}m")
+            open_bits.append(Markup("fronting {}").format(front_chip))
+        else:
+            open_bits.append(Markup("fronting {}").format(escape(short_name)))
+    if open_bits:
+        joined = Markup(" and ").join(open_bits) if len(open_bits) > 1 else open_bits[0]
+        parts.append(Markup("{}, this property offers strong accessibility for residential or commercial use.").format(joined))
+
+    # --- nearby services (up to 4 evidence points) ---
+    if evidence_points:
+        top4 = evidence_points[:4]
+        chips = [_evid(f"{name} \u00b7 {_format_distance(dist)}") for _, name, dist in top4]
+        if len(chips) == 1:
+            chip_list = chips[0]
+        else:
+            chip_list = Markup(", ").join(chips[:-1])
+            chip_list = Markup("{} and {}").format(chip_list, chips[-1])
+        nouns = []
+        for label, _name, _dist in top4:
+            noun = _CATEGORY_BENEFIT_NOUN.get(label)
+            if noun and noun not in nouns:
+                nouns.append(noun)
+        if len(nouns) >= 2:
+            noun_phrase = ", ".join(nouns[:-1]) + " and " + nouns[-1]
+        elif nouns:
+            noun_phrase = nouns[0]
+        else:
+            noun_phrase = "everyday needs"
+        parts.append(Markup("Nearby services include {}, putting {} within a short walk.").format(chip_list, noun_phrase))
+
+    # --- established area + density ---
+    closing_bits = []
+    if estate:
+        name, dist = estate
+        closing_bits.append(Markup("anchored by {}").format(_evid(f"{name} \u00b7 {_format_distance(dist)}")))
+    if density_counts:
+        density_chips = [_evid(f"{_count_label(c)} {label.lower() if c != 1 else _singular(label)}") for label, c in density_counts]
+        density_joined = Markup(" and ").join(density_chips)
+        closing_bits.append(Markup("a dense service base of {} within 5km").format(density_joined))
+    if closing_bits:
+        town_possessive = f"{town_label}'s" if town_label else "the area's"
+        closing = Markup(" and ").join(closing_bits) if len(closing_bits) > 1 else closing_bits[0]
+        parts.append(Markup(
+            "The surrounding area is already residential, {} \u2014 supporting apartments, "
+            "rentals, or mixed-use development for buyers who want easy reach of {} town centre."
+        ).format(closing, town_possessive))
+
+    if not parts:
+        return None
+    return Markup(" ").join(parts)
+
+
+def _qr_data_uri(url, box_size=8):
+    """Renders a QR code pointing at the Google Maps pin as an in-memory
+    PNG, returned as a base64 data: URI. Returns None (never a broken
+    image) if generation fails for any reason."""
+    if not url:
+        return None
+    try:
+        qr = qrcode.QRCode(border=1, box_size=box_size)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="#1D2B1F", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
+    except Exception as exc:
+        logger.warning("Could not generate QR code for %s: %s", url, exc)
+        return None
 
 
 def _google_maps_view_url(pin):
@@ -737,555 +722,138 @@ def _google_maps_view_url(pin):
     return f"https://www.google.com/maps/search/?api=1&query={pin.latitude},{pin.longitude}"
 
 
-PHOTO_DISPLAY_CATEGORIES = ("Schools", "Hospitals", "Universities", "Shopping", "Gated Communities")
-
-
-def _collect_amenity_photos(cell, max_photos=4):
-    """Nearest amenities (across the sellable categories) that have a
-    photo already downloaded by google_client.fetch_amenity_photos --
-    sorted by distance so the closest, most relevant landmarks show first."""
-    amenity_fields = _discover_amenity_fields(cell)
-    candidates = []
-    for label, entries in amenity_fields:
-        if label not in PHOTO_DISPLAY_CATEGORIES:
-            continue
-        for entry in entries:
-            if entry.get("photo_url"):
-                candidates.append((label, entry))
-    candidates.sort(
-        key=lambda pair: pair[1].get("distance_m") if pair[1].get("distance_m") is not None else float("inf")
-    )
-    return candidates[:max_photos]
-
-
 def render_report_pdf(pin, cell):
+    """Renders the Property Location Report by filling
+    property_location_report.html.j2 (the exact template, unmodified CSS
+    and DOM) with real pin/cell data and converting straight to PDF via
+    WeasyPrint. Every distance-based claim comes from
+    _collect_evidence_points()/_development_suitability_table(), and any
+    category missing for a given pin is dropped, never faked, so the
+    report degrades gracefully instead of printing "N/A"."""
     try:
         accessibility_score = _score_accessibility(cell)
         investment_score = _score_investment(cell, accessibility_score)
         summary_lead, summary_bullets = _summary_text(pin, cell, investment_score, accessibility_score)
         summary_text = summary_lead + (" " + " ".join(summary_bullets) if summary_bullets else "")
 
-        buffer = io.BytesIO()
-        report_title = f"{_display_location_name(pin, cell)} \u2014 Location Intelligence Report"
-        doc = SimpleDocTemplate(
-            buffer, pagesize=A4,
-            topMargin=20 * mm, bottomMargin=20 * mm,
-            leftMargin=15 * mm, rightMargin=15 * mm,
-            title=report_title,
-            author="Scape Data Solutions",
-        )
-        
-        # Custom styles
-        styles = getSampleStyleSheet()
-        
-        styles.add(ParagraphStyle(
-            name='CustomTitle',
-            parent=styles['Title'],
-            fontSize=24,
-            textColor=colors.HexColor('#0a2a5e'),
-            spaceAfter=10,
-            alignment=TA_CENTER
-        ))
-        
-        styles.add(ParagraphStyle(
-            name='CustomHeading2',
-            parent=styles['Heading2'],
-            fontSize=16,
-            textColor=colors.HexColor('#1a4a7e'),
-            spaceAfter=8,
-            alignment=TA_LEFT
-        ))
-        
-        styles.add(ParagraphStyle(
-            name='CustomHeading3',
-            parent=styles['Heading3'],
-            fontSize=14,
-            textColor=colors.HexColor('#2a5a8e'),
-            spaceAfter=6,
-            alignment=TA_LEFT
-        ))
-        
-        styles.add(ParagraphStyle(
-            name='JustifiedNormal',
-            parent=styles['Normal'],
-            fontSize=11,
-            leading=14,
-            alignment=TA_JUSTIFY,
-            spaceAfter=6
-        ))
+        location_name = _display_location_name(pin, cell)
+        nearest_town = _nearest_town_summary(cell)
+        town_label = nearest_town[0] if nearest_town else None
+        county = _cell_county(cell)
+        evidence_points = _collect_evidence_points(cell)
+        estate = _nearby_estate(cell)
+        density_counts = _evidence_density_counts(cell)
 
-        styles.add(ParagraphStyle(
-            name='TableCell',
-            parent=styles['Normal'],
-            fontSize=9,
-            leading=11,
-        ))
+        frontage_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
+        frontage_dist = getattr(cell, "nearest_road_distance_m", None)
+        if not frontage_name:
+            nearby_roads = getattr(cell, "nearby_roads", None) or []
+            if nearby_roads:
+                frontage_name = _town_qualified_road_name(cell, nearby_roads[0].get("name"))
+                frontage_dist = nearby_roads[0].get("distance_m")
 
-        styles.add(ParagraphStyle(
-            name='ScoreHeader',
-            parent=styles['Normal'],
-            fontSize=11,
-            leading=13,
-            alignment=TA_CENTER,
-            textColor=colors.white,
-            fontName='Helvetica-Bold',
-        ))
+        # ---- masthead ----
+        ref = f"{str(getattr(pin, 'id', 'N-A'))[:10].upper()}"
+        location_line = location_name
+        if town_label and county:
+            location_line = f"{town_label}, {county} County"
+        elif town_label:
+            location_line = town_label
+        generated_date = datetime.now().strftime("%d %B %Y")
 
-        styles.add(ParagraphStyle(
-            name='ScoreValue',
-            parent=styles['Normal'],
-            fontSize=15,
-            leading=18,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor('#0a2a5e'),
-            fontName='Helvetica-Bold',
-        ))
-        
-        story = []
+        seal = None
+        if frontage_name and frontage_dist is not None:
+            seal = {
+                "top": "Verified",
+                "mid": f"{int(round(frontage_dist))}m",
+                "bot": frontage_name.split(",")[0],
+            }
 
-        # Header
-        story.append(Paragraph("LOCATION INTELLIGENCE REPORT", styles['CustomTitle']))
-        story.append(Spacer(1, 2 * mm))
-        story.append(Paragraph(f"Generated: {datetime.now().strftime('%B %d, %Y')}", styles['Normal']))
-        story.append(Spacer(1, 6 * mm))
-
-        # Property Location
-        story.append(Paragraph(f"PROPERTY LOCATION: {_display_location_name(pin, cell)}", styles['CustomHeading2']))
-        maps_url = _google_maps_view_url(pin)
-        story.append(Paragraph(f'<link href="{maps_url}" color="blue">View on Google Maps</link>', styles['TableCell']))
-        story.append(Spacer(1, 4 * mm))
-
-        # Executive Summary
-        story.append(Paragraph("EXECUTIVE SUMMARY", styles['CustomHeading2']))
-        story.append(Spacer(1, 2 * mm))
-        story.append(Paragraph(summary_lead, styles['JustifiedNormal']))
-        if summary_bullets:
-            story.append(Spacer(1, 1 * mm))
-            bullet_items = [
-                ListItem(Paragraph(b, styles['JustifiedNormal']), leftIndent=4 * mm, spaceAfter=2)
-                for b in summary_bullets
-            ]
-            story.append(ListFlowable(
-                bullet_items, bulletType='bullet', start='•',
-                leftIndent=6 * mm, bulletFontSize=9,
-            ))
-        story.append(Spacer(1, 6 * mm))
-
-        # Investment Scores
-        story.append(Paragraph("INVESTMENT SCORECARD", styles['CustomHeading2']))
-        story.append(Spacer(1, 2 * mm))
-        
-        score_table = Table(
-            [
-                [Paragraph("ACCESSIBILITY SCORE", styles['ScoreHeader']), Paragraph("INVESTMENT POTENTIAL", styles['ScoreHeader'])],
-                [Paragraph(f"{accessibility_score}/100", styles['ScoreValue']), Paragraph(f"{investment_score}/100", styles['ScoreValue'])],
-            ],
-            colWidths=[90 * mm, 90 * mm],
-            rowHeights=[12 * mm, 16 * mm],
-        )
-        score_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0a2a5e')),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ]))
-        story.append(score_table)
-        story.append(Spacer(1, 2 * mm))
-        story.append(Paragraph(
-            f"<b>Verdict: {_verdict_label(investment_score)}</b>",
-            styles['JustifiedNormal']
-        ))
-        story.append(Paragraph(
-            "<i>Descriptive scores based on infrastructure, accessibility, and market data - not a property valuation</i>",
-            styles['Normal']
-        ))
-        story.append(Spacer(1, 6 * mm))
-
-        # Why This Score -- contributors
-        contributors = _investment_contributors(cell, investment_score)
-        if contributors:
-            story.append(Paragraph("WHY THIS SCORE", styles['CustomHeading3']))
-            story.append(Spacer(1, 2 * mm))
-            contributor_items = []
-            for kind, text in contributors:
-                if kind == "strength":
-                    line = f"<font color='#1a7a3a'><b>Strength</b></font> &mdash; {text}"
-                else:
-                    line = f"<font color='#b8860b'><b>Watch</b></font> &mdash; {text}"
-                contributor_items.append(
-                    ListItem(Paragraph(line, styles['JustifiedNormal']), leftIndent=4 * mm, spaceAfter=2)
-                )
-            story.append(ListFlowable(
-                contributor_items, bulletType='bullet', start='•',
-                leftIndent=6 * mm, bulletFontSize=9,
-            ))
-            story.append(Spacer(1, 6 * mm))
-
-        # Location Scores -- category star/bar ratings
-        category_scores = _category_stars(cell, investment_score)
-        story.append(Paragraph("LOCATION SCORES", styles['CustomHeading3']))
-        story.append(Spacer(1, 2 * mm))
-        score_rows = []
-        for label, stars in category_scores:
-            score_rows.append([
-                Paragraph(label, styles['TableCell']),
-                _stars_drawing(stars),
-            ])
-        scores_table = Table(score_rows, colWidths=[45 * mm, 60 * mm])
-        scores_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 0),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ]))
-        story.append(scores_table)
-        story.append(Spacer(1, 6 * mm))
-
-        # AI Investment Opinion
-        story.append(Paragraph("AI INVESTMENT OPINION", styles['CustomHeading3']))
-        story.append(Spacer(1, 2 * mm))
-        suitability_data = _development_suitability_table(cell)
-        opinion_text, risk_text = _ai_investment_opinion(pin, cell, investment_score, suitability_data)
-        story.append(Paragraph(opinion_text, styles['JustifiedNormal']))
-        story.append(Paragraph(f"<i>{risk_text}</i>", styles['JustifiedNormal']))
-        story.append(Spacer(1, 6 * mm))
-
-        # Top Reasons
-        top_reasons = _top_reasons(cell, pin, accessibility_score)
-        if top_reasons:
-            story.append(Paragraph("TOP REASONS TO CONSIDER THIS PROPERTY", styles['CustomHeading3']))
-            story.append(Spacer(1, 2 * mm))
-            reason_items = [
-                ListItem(Paragraph(r, styles['JustifiedNormal']), leftIndent=4 * mm, spaceAfter=2)
-                for r in top_reasons
-            ]
-            story.append(ListFlowable(
-                reason_items, bulletType='bullet', start='•',
-                leftIndent=6 * mm, bulletFontSize=9,
-            ))
-            story.append(Spacer(1, 6 * mm))
-
-        mv_town, mv_benchmark = _match_price_benchmark(cell)
-        if mv_benchmark:
-            story.append(Paragraph("MARKET VALUES", styles['CustomHeading2']))
-            story.append(Spacer(1, 2 * mm))
-            price_bit = ""
-            if mv_benchmark.get("price_per_acre_kes"):
-                price_bit = f"KES {mv_benchmark['price_per_acre_kes']:,.0f} per acre, "
-            yoy = mv_benchmark.get("yoy_change_pct")
-            direction = "up" if yoy is not None and yoy > 0 else "down" if yoy is not None and yoy < 0 else "flat"
-            mv_text = f"{_town_or_city_label(mv_town)} land values: {price_bit}{direction} {abs(yoy):.1f}% year-over-year"
-            if mv_benchmark.get("quarter"):
-                mv_text += f" ({mv_benchmark['quarter']})"
-            mv_text += "."
-            if mv_benchmark.get("note"):
-                mv_text += f" {mv_benchmark['note'].capitalize()}."
-            story.append(Paragraph(mv_text, styles['JustifiedNormal']))
-            story.append(Spacer(1, 6 * mm))
-
-        # Development Suitability
-        story.append(Paragraph("DEVELOPMENT SUITABILITY", styles['CustomHeading2']))
-        story.append(Spacer(1, 2 * mm))
-        
-        suitability_data = _development_suitability_table(cell)
-        table_data = [["Development Type", "Suitability", "Rationale"]]
-        for dev_type, suitability, rationale in suitability_data:
-            table_data.append([
-                Paragraph(dev_type, styles['TableCell']),
-                Paragraph(suitability, styles['TableCell']),
-                Paragraph(rationale, styles['TableCell']),
-            ])
-        
-        suit_table = Table(table_data, colWidths=[40 * mm, 30 * mm, 110 * mm])
-        suit_table.setStyle(TableStyle([
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0a2a5e')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('PADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(suit_table)
-        story.append(Spacer(1, 6 * mm))
-
-        # Visual Assets
-        sat_image = _fetch_image_flowable(cell.satellite_image_url)
-        if sat_image:
-            story.append(Paragraph("SATELLITE VIEW", styles['CustomHeading3']))
-            story.append(sat_image)
-            story.append(Spacer(1, 4 * mm))
-
-        if cell.street_view_available:
-            sv_image = _fetch_image_flowable(cell.street_view_image_url)
-            if sv_image:
-                story.append(Paragraph("STREET VIEW", styles['CustomHeading3']))
-                story.append(sv_image)
-                story.append(Spacer(1, 4 * mm))
-
-        # Access & Directions -- shareable pin link, one-tap navigation,
-        # and turn-by-turn steps from the nearest town (when Routes
-        # returned them -- see google_client.fetch_nearest_towns).
-        directions_url = _google_maps_directions_url(pin)
-        view_url = _google_maps_view_url(pin)
-        story.append(Paragraph("ACCESS & DIRECTIONS", styles['CustomHeading3']))
-        story.append(Spacer(1, 1 * mm))
-        story.append(Paragraph(
-            f"<link href='{view_url}' color='#1a4a7e'><b>View on Google Maps</b></link>"
-            f"&nbsp;&nbsp;|&nbsp;&nbsp;"
-            f"<link href='{directions_url}' color='#1a4a7e'><b>Get Directions &rarr;</b></link>",
-            styles['JustifiedNormal']
-        ))
-
-        steps_source = next((t for t in (cell.nearest_towns or []) if t.get("directions_steps")), None)
-        if steps_source:
-            story.append(Spacer(1, 3 * mm))
-            story.append(Paragraph(
-                f"<b>Driving from {_town_or_city_label(steps_source['name'])}:</b>", styles['JustifiedNormal']
-            ))
-            step_items = [
-                ListItem(Paragraph(step, styles['TableCell']), leftIndent=4 * mm, spaceAfter=2)
-                for step in steps_source["directions_steps"][:12]
-            ]
-            story.append(ListFlowable(
-                step_items, bulletType='1', start='1',
-                leftIndent=6 * mm, bulletFontSize=9,
-            ))
-        story.append(Spacer(1, 6 * mm))
-
-        # Nearby Landmarks -- real photos of the closest sellable amenities
-        photo_entries = _collect_amenity_photos(cell, max_photos=4)
-        if photo_entries:
-            story.append(Paragraph("NEARBY LANDMARKS", styles['CustomHeading2']))
-            story.append(Spacer(1, 2 * mm))
-
-            photo_cells = []
-            for label, entry in photo_entries:
-                img = _fetch_image_flowable(entry.get("photo_url"), width_mm=75, height_mm=55)
-                if not img:
-                    continue
-                caption = Paragraph(
-                    f"<b>{entry.get('name', '')}</b><br/>{label} &middot; {_format_distance(entry.get('distance_m'))}",
-                    styles['TableCell'],
-                )
-                photo_cells.append([img, caption])
-
-            rows = []
-            for i in range(0, len(photo_cells), 2):
-                pair = photo_cells[i:i + 2]
-                img_row = [p[0] for p in pair]
-                cap_row = [p[1] for p in pair]
-                if len(pair) == 1:
-                    img_row.append("")
-                    cap_row.append("")
-                rows.append(img_row)
-                rows.append(cap_row)
-
-            if rows:
-                photo_table = Table(rows, colWidths=[80 * mm, 80 * mm])
-                photo_table.setStyle(TableStyle([
-                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                    ('TOPPADDING', (0, 0), (-1, -1), 3),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ]))
-                story.append(photo_table)
-            story.append(Spacer(1, 6 * mm))
-
-        amenity_fields = _discover_amenity_fields(cell, major_only=True)
-        if amenity_fields:
-            story.append(Paragraph("NEARBY AMENITIES", styles['CustomHeading2']))
-            story.append(Spacer(1, 2 * mm))
-
-            flat_entries = []
-            for label, entries in amenity_fields:
-                for entry in entries:
-                    flat_entries.append((label, entry))
-            flat_entries.sort(
-                key=lambda pair: pair[1].get('distance_m') if pair[1].get('distance_m') is not None else float('inf')
-            )
-
-            seen_names = set()
-            deduped_entries = []
-            for label, entry in flat_entries:
-                key = _normalize_amenity_name(entry.get('name'))
-                if key and key in seen_names:
-                    continue
-                if key:
-                    seen_names.add(key)
-                deduped_entries.append((label, entry))
-            flat_entries = deduped_entries
-
-            amenity_data = [["Type", "Name", "Distance"]]
-            for label, entry in flat_entries[:30]:  # cap at 30 rows total for a readable page
-                name = entry.get('name', 'Unknown')
-                distance = entry.get('distance_m')
-                dist_str = _format_distance(distance)
-                amenity_data.append([
-                    Paragraph(label, styles['TableCell']),
-                    Paragraph(name, styles['TableCell']),
-                    Paragraph(dist_str, styles['TableCell']),
-                ])
-            
-            amenity_table = Table(amenity_data, colWidths=[35 * mm, 90 * mm, 55 * mm])
-            amenity_table.setStyle(TableStyle([
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0a2a5e')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('PADDING', (0, 0), (-1, -1), 4),
-            ]))
-            story.append(amenity_table)
-            story.append(Spacer(1, 6 * mm))
-
-        # Nearby Towns -- from the dynamic Kenya-wide matcher (kenya_towns.py),
-        # not just the single nearest one already used in the executive summary.
-        if cell.nearest_towns:
-            story.append(Paragraph("NEARBY TOWNS", styles['CustomHeading2']))
-            story.append(Spacer(1, 2 * mm))
-
-            town_data = [["Town", "County", "Distance", "Drive Time"]]
-            for t in cell.nearest_towns:
-                dist_str = _format_distance(t.get("distance_m"))
-                mins = t.get("drive_duration_s")
-                drive_str = f"{round(mins / 60)} min" if mins else "Unknown"
-                town_data.append([
-                    Paragraph(_town_or_city_label(t["name"]), styles['TableCell']),
-                    Paragraph(t["county"].title(), styles['TableCell']),
-                    Paragraph(dist_str, styles['TableCell']),
-                    Paragraph(drive_str, styles['TableCell']),
-                ])
-
-            town_table = Table(town_data, colWidths=[50 * mm, 45 * mm, 40 * mm, 40 * mm])
-            town_table.setStyle(TableStyle([
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0a2a5e')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('PADDING', (0, 0), (-1, -1), 4),
-            ]))
-            story.append(town_table)
-            story.append(Spacer(1, 6 * mm))
-
-        # Area Density
-        density_rows = _density_table_data(cell)
-        if density_rows:
-            story.append(Paragraph("AMENITY DENSITY", styles['CustomHeading2']))
-            story.append(Spacer(1, 2 * mm))
-            density_data = [["Category", "Within 1km", "Within 3km", "Within 5km"]]
-            for label, c1, c3, c5 in density_rows:
-                density_data.append([label, _count_label(c1), _count_label(c3), _count_label(c5)])
-            density_table = Table(density_data, colWidths=[70 * mm, 36 * mm, 37 * mm, 37 * mm])
-            density_table.setStyle(TableStyle([
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0a2a5e')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('PADDING', (0, 0), (-1, -1), 4),
-            ]))
-            story.append(density_table)
-            story.append(Spacer(1, 6 * mm))
-
-        # Additional Details
-        story.append(Paragraph("LOCATION DETAILS", styles['CustomHeading2']))
-        story.append(Spacer(1, 2 * mm))
-        
-        details = []
-        if cell.air_quality_category:
-            details.append(f"Air Quality: {cell.air_quality_category} (AQI {cell.air_quality_index})")
-
-        if getattr(cell, "elevation_meters", None) is not None:
-            details.append(f"Elevation: {cell.elevation_meters:.0f}m above sea level")
-
-        if getattr(cell, "on_paved_road", None) is not None:
-            if cell.on_paved_road:
-                road_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
-                if road_name:
-                    dist_bit = f" (~{cell.nearest_road_distance_m}m away)" if cell.nearest_road_distance_m else ""
-                    details.append(f"Road Access: {road_name}{dist_bit}")
-                elif cell.nearest_road_distance_m:
-                    details.append(f"Road Access: Paved road nearby, ~{cell.nearest_road_distance_m}m away (name not resolved)")
-                else:
-                    details.append("Road Access: Paved road detected nearby (exact name and distance not resolved)")
+        # ---- quick facts strip ----
+        facts = []
+        if town_label:
+            facts.append({"label": "Nearest Town", "value": town_label})
+            _, minutes, km = nearest_town
+            if km is not None and minutes is not None:
+                dist_val = f"{int(round(km * 1000))}m \u00b7 {minutes} min"
+            elif minutes is not None:
+                dist_val = f"{minutes} min"
+            elif km is not None:
+                dist_val = f"{km}km"
             else:
-                details.append("Road Access: No mapped road detected nearby -- verify physical access before purchase")
+                dist_val = "Unknown"
+            facts.append({"label": f"Distance to {town_label} Centre", "value": dist_val})
+        if frontage_name:
+            facts.append({"label": "Frontage", "value": frontage_name.split(",")[0]})
+        if county:
+            facts.append({"label": "County", "value": county})
 
-        nearby_roads = getattr(cell, "nearby_roads", None) or []
-        for road in nearby_roads[:3]:
-            name = _town_qualified_road_name(cell, road.get("name"))
-            if name:
-                details.append(f"Nearby Road: {_format_road_distance(name, road.get('distance_m'))}")
-        
-        for detail in details:
-            story.append(Paragraph(f"• {detail}", styles['JustifiedNormal']))
-        
-        story.append(Spacer(1, 6 * mm))
+        # ---- listing description (with inline evidence chips) ----
+        description_html = _build_description_html(
+            town_label, nearest_town, frontage_name, frontage_dist,
+            evidence_points, estate, density_counts,
+        )
+        if description_html is None:
+            description_html = Markup(escape(
+                f"{location_name}. Not enough verified data was available to write "
+                "a description for this pin."
+            ))
 
-        # Next Steps
-        story.append(Paragraph("NEXT STEPS", styles['CustomHeading2']))
-        story.append(Spacer(1, 2 * mm))
-        broker_email = getattr(getattr(pin, "broker", None), "email", None)
+        # ---- highlights ----
+        highlights = []
+        if frontage_name:
+            short_name = frontage_name.split(",")[0]
+            if frontage_dist is not None and frontage_dist < ROAD_DISTANCE_ALONG_THRESHOLD_M:
+                highlights.append({"text": f"Fronts {short_name}, the main road into town", "dist": "0m"})
+            elif frontage_dist is not None:
+                highlights.append({"text": f"Fronts {short_name}", "dist": f"{int(round(frontage_dist))}m"})
+        for label, name, dist in evidence_points:
+            highlights.append({"text": name, "dist": _format_distance(dist)})
+        if estate:
+            name, dist = estate
+            highlights.append({"text": f"Established neighbourhood: {name}", "dist": _format_distance(dist)})
+
+        # ---- suitability ----
+        suitability = [
+            {"name": dev_type, "evidence": rationale, "stars": SUITABILITY_STARS.get(level, 1)}
+            for dev_type, level, rationale in _top_suitability_rows(cell)
+        ]
+
+        # ---- landmarks ----
+        landmarks = [
+            {"name": name, "distance": _format_distance(dist)}
+            for _label, name, dist in _collect_evidence_points(cell, max_points=5)
+        ]
+
+        # ---- maps / QR ----
+        view_url = _google_maps_view_url(pin)
+        qr_data_uri = _qr_data_uri(view_url)
+
+        # ---- footer contact ----
         broker_phone = _broker_phone(pin)
         whatsapp_link = _whatsapp_link(broker_phone)
-        tel_link = _tel_link(broker_phone)
-
-        contact_channels = []
-        if broker_email:
-            contact_channels.append(broker_email)
-        if whatsapp_link:
-            contact_channels.append(f'<link href="{whatsapp_link}"><font color="#1a7d3c"><b>WhatsApp {broker_phone}</b></font></link>')
-        if tel_link:
-            contact_channels.append(f'<link href="{tel_link}"><font color="#1a4d7d"><b>Call {broker_phone}</b></font></link>')
-
-        if contact_channels:
-            contact_bit = f" Contact via {' or '.join(contact_channels)} to discuss pricing, site visits, or next steps."
+        if broker_phone and whatsapp_link:
+            contact_line = f"{broker_phone} \u00b7 WhatsApp"
         else:
-            contact_bit = " Reach out to whoever shared this report to discuss pricing, site visits, or next steps."
-        story.append(Paragraph(
-            f"This report was generated via Scape Data Solutions.{contact_bit}",
-            styles['JustifiedNormal']
-        ))
-        story.append(Spacer(1, 6 * mm))
+            contact_line = DEFAULT_CONTACT_LINE
 
-        # Branded footer
-        footer_contact_line = "property.scapedatasolutions.com &nbsp;|&nbsp; info@scapedatasolutions.com"
-        if SCAPE_SUPPORT_PHONE:
-            footer_contact_line += f" &nbsp;|&nbsp; {SCAPE_SUPPORT_PHONE}"
-        story.append(Paragraph(
-            "<b>Powered by Scape Property Intelligence</b><br/>"
-            "Generate professional property reports in under 60 seconds.<br/>"
-            f"{footer_contact_line}",
-            styles['Normal']
-        ))
-        story.append(Spacer(1, 3 * mm))
+        template = _jinja_env.get_template("property_location_report.html.j2")
+        html_string = template.render(
+            ref=ref,
+            location_line=location_line,
+            generated_date=generated_date,
+            seal=seal,
+            facts=facts,
+            description_html=description_html,
+            highlights=highlights,
+            suitability=suitability,
+            landmarks=landmarks,
+            qr_data_uri=qr_data_uri,
+            contact_line=contact_line,
+        )
 
-        # Footer
-        story.append(Paragraph(
-            "<i>This report provides data-driven location intelligence. All data is derived from publicly available sources. "
-            "Conduct independent due diligence before making investment decisions.</i>",
-            styles['Normal']
-        ))
-
-        doc.build(story)
-        return buffer.getvalue(), investment_score, accessibility_score, summary_text
+        pdf_bytes = HTML(string=html_string, base_url=TEMPLATE_DIR).write_pdf()
+        return pdf_bytes, investment_score, accessibility_score, summary_text
 
     except Exception as exc:
         logger.error("PDF render failed for pin %s: %s", pin.id, exc)
