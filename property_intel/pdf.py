@@ -103,6 +103,19 @@ def _whatsapp_link(phone):
     return f"https://wa.me/{digits}"
 
 
+def _tel_link(phone):
+    """Builds a tel: click-to-call link from a canonical +254XXXXXXXXX
+    phone number. Returns None for anything invalid."""
+    if not phone:
+        return None
+    digits = re.sub(r"\D", "", phone)
+    if digits.startswith("0") and len(digits) == 10:
+        digits = "254" + digits[1:]
+    if not re.match(r"^254[17]\d{8}$", digits):
+        return None
+    return f"tel:+{digits}"
+
+
 def _broker_phone(pin):
     """Best-effort lookup of the submitting broker's phone, sourced from
     their UserSignup profile (collected at signup). Returns None for
@@ -722,6 +735,10 @@ def _google_maps_view_url(pin):
     return f"https://www.google.com/maps/search/?api=1&query={pin.latitude},{pin.longitude}"
 
 
+def _google_maps_directions_url(pin):
+    return f"https://www.google.com/maps/dir/?api=1&destination={pin.latitude},{pin.longitude}"
+
+
 def render_report_pdf(pin, cell):
     """Renders the Property Location Report by filling
     property_location_report.html.j2 (the exact template, unmodified CSS
@@ -825,17 +842,31 @@ def render_report_pdf(pin, cell):
             for _label, name, dist in _collect_evidence_points(cell, max_points=5)
         ]
 
-        # ---- maps / QR ----
+        # ---- maps / QR / satellite / street view ----
         view_url = _google_maps_view_url(pin)
+        directions_url = _google_maps_directions_url(pin)
         qr_data_uri = _qr_data_uri(view_url)
+        satellite_data_uri = _image_data_uri(getattr(cell, "satellite_image_url", None))
+        street_view_data_uri = None
+        if getattr(cell, "street_view_available", False):
+            street_view_data_uri = _image_data_uri(getattr(cell, "street_view_image_url", None))
 
         # ---- footer contact ----
+        # Prefers the broker's own WhatsApp/tel line (collected at signup);
+        # falls back to their email, then to the company's own line -- the
+        # same priority order the old ReportLab footer used.
         broker_phone = _broker_phone(pin)
+        broker_email = getattr(getattr(pin, "broker", None), "email", None)
         whatsapp_link = _whatsapp_link(broker_phone)
-        if broker_phone and whatsapp_link:
-            contact_line = f"{broker_phone} \u00b7 WhatsApp"
-        else:
-            contact_line = DEFAULT_CONTACT_LINE
+        tel_link = _tel_link(broker_phone)
+        contact_bits = []
+        if whatsapp_link:
+            contact_bits.append(f"{broker_phone} \u00b7 WhatsApp")
+        elif tel_link:
+            contact_bits.append(broker_phone)
+        if broker_email:
+            contact_bits.append(broker_email)
+        contact_line = " \u00b7 ".join(contact_bits) if contact_bits else DEFAULT_CONTACT_LINE
 
         template = _jinja_env.get_template("property_location_report.html.j2")
         html_string = template.render(
@@ -849,6 +880,10 @@ def render_report_pdf(pin, cell):
             suitability=suitability,
             landmarks=landmarks,
             qr_data_uri=qr_data_uri,
+            satellite_data_uri=satellite_data_uri,
+            street_view_data_uri=street_view_data_uri,
+            view_url=view_url,
+            directions_url=directions_url,
             contact_line=contact_line,
         )
 
