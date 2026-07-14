@@ -20,6 +20,7 @@ response says so plainly — wiring an actual payment provider in is future
 scope, deliberately kept out of property_intel.
 """
 import logging
+from decimal import Decimal
 
 from django.conf import settings
 from django.db.models import Sum
@@ -59,9 +60,12 @@ PROPERTY_REPORT_PRICE_KES = getattr(settings, "PROPERTY_REPORT_PRICE_KES", 250)
 REPORT_PAYMENT_PURPOSE = "property_report"
 
 
-def _initiate_report_payment(report):
+def _initiate_report_payment(report, amount):
     """
-    Starts a Paystack checkout for a report sitting in 'awaiting_payment'.
+    Starts a Paystack checkout for a report sitting in 'awaiting_payment',
+    for `amount` KES -- the full report price, OR a smaller remainder if a
+    partial wallet balance already covered part of it (see
+    report.wallet_applied_kes and the callers of this function).
     Returns (authorization_url, error_message) — exactly one will be set.
     A failure here (Paystack down, bad config) must never 500 the whole
     pin-submission response; the report stays 'awaiting_payment' and the
@@ -71,7 +75,7 @@ def _initiate_report_payment(report):
     try:
         txn = payment_services.initialize_transaction(
             email=broker.email,
-            amount=PROPERTY_REPORT_PRICE_KES,
+            amount=amount,
             currency="KES",
             purpose=REPORT_PAYMENT_PURPOSE,
             external_reference=str(report.id),
@@ -116,6 +120,28 @@ def _try_pay_from_wallet(user_id, *, report_price):
         note="Report paid from wallet balance (auto-detected at submission)",
     )
     return True
+
+
+def _wallet_balance(user_id):
+    """
+    Current wallet balance for a logged-in broker's linked user, WITHOUT
+    debiting it -- used only to compute how much of a partial balance can
+    be applied toward a report's price before sending the remainder to
+    Paystack. Returns Decimal('0') for anonymous/no-wallet users. The
+    actual debit happens later, only once payment is confirmed -- see
+    property_intel/signals.py.
+    """
+    if not user_id:
+        return Decimal("0")
+    from django.contrib.auth import get_user_model
+    from payments.models import UserWallet
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return Decimal("0")
+    return UserWallet.get_or_create_for_user(user).balance
 
 
 def _client_ip(request):
@@ -208,16 +234,24 @@ class PinSubmitView(APIView):
             generate_report_task.delay(str(report.id))
             return Response(PropertyReportSerializer(report).data, status=status.HTTP_201_CREATED)
 
-        # No wallet balance (or anonymous) — start a Paystack checkout. The
-        # report sits in 'awaiting_payment' until payments/signals.py's
-        # receiver sees a payment_succeeded event for it (see
-        # property_intel/signals.py) and flips it to 'pending' + dispatches
-        # generation. Nothing here talks to Paystack directly — that's
-        # payments/services.py.
+        # Wallet didn't cover the FULL price, but may still have a partial
+        # balance worth applying (e.g. KES 36 left from an earlier top-up).
+        # Earmark it on the report and charge Paystack only the remainder --
+        # the wallet itself isn't touched until payment_succeeded confirms
+        # the remainder went through (property_intel/signals.py), so an
+        # abandoned checkout never strands the balance.
+        wallet_applied = _wallet_balance(broker.user_id)
+        remainder = Decimal(str(PROPERTY_REPORT_PRICE_KES)) - wallet_applied
+        if remainder <= 0:
+            wallet_applied = Decimal(str(PROPERTY_REPORT_PRICE_KES))
+            remainder = Decimal("1")
+
         report = PropertyReport.objects.create(
-            pin=pin, status="awaiting_payment", is_free_tier=False, price_charged_kes=PROPERTY_REPORT_PRICE_KES,
+            pin=pin, status="awaiting_payment", is_free_tier=False,
+            price_charged_kes=PROPERTY_REPORT_PRICE_KES,
+            wallet_applied_kes=wallet_applied if wallet_applied > 0 else None,
         )
-        authorization_url, error = _initiate_report_payment(report)
+        authorization_url, error = _initiate_report_payment(report, amount=remainder)
         if error:
             return Response(
                 {"report_id": str(report.id), "status": report.status, "message": error},
@@ -228,7 +262,8 @@ class PinSubmitView(APIView):
                 "report_id": str(report.id),
                 "status": report.status,
                 "checkout_url": authorization_url,
-                "amount_kes": str(PROPERTY_REPORT_PRICE_KES),
+                "amount_kes": str(remainder),
+                "wallet_applied_kes": str(wallet_applied) if wallet_applied > 0 else None,
                 "message": "You've used all your free reports on this device. Complete payment to generate this report.",
             },
             status=status.HTTP_402_PAYMENT_REQUIRED,
@@ -346,11 +381,20 @@ class OTPVerifyView(APIView):
 
         # Free reports ran out in the gap between the original submission
         # and OTP verification (rare, but possible under concurrent use).
+        # Same partial-wallet-balance logic as PinSubmitView -- see there
+        # for why the wallet isn't debited until payment is confirmed.
+        wallet_applied = _wallet_balance(report.pin.broker.user_id)
+        remainder = Decimal(str(PROPERTY_REPORT_PRICE_KES)) - wallet_applied
+        if remainder <= 0:
+            wallet_applied = Decimal(str(PROPERTY_REPORT_PRICE_KES))
+            remainder = Decimal("1")
+
         report.status = "awaiting_payment"
         report.is_free_tier = False
         report.price_charged_kes = PROPERTY_REPORT_PRICE_KES
-        report.save(update_fields=["status", "is_free_tier", "price_charged_kes"])
-        authorization_url, error = _initiate_report_payment(report)
+        report.wallet_applied_kes = wallet_applied if wallet_applied > 0 else None
+        report.save(update_fields=["status", "is_free_tier", "price_charged_kes", "wallet_applied_kes"])
+        authorization_url, error = _initiate_report_payment(report, amount=remainder)
         if error:
             return Response(
                 {"report_id": str(report.id), "status": report.status, "message": error},
@@ -361,7 +405,8 @@ class OTPVerifyView(APIView):
                 "report_id": str(report.id),
                 "status": report.status,
                 "checkout_url": authorization_url,
-                "amount_kes": str(PROPERTY_REPORT_PRICE_KES),
+                "amount_kes": str(remainder),
+                "wallet_applied_kes": str(wallet_applied) if wallet_applied > 0 else None,
                 "message": "Your free reports on this device were used up while verifying. Complete payment to generate this report.",
             },
             status=status.HTTP_402_PAYMENT_REQUIRED,

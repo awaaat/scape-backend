@@ -447,6 +447,15 @@ class PropertyReport(models.Model):
     # ── Payment ────────────────────────────────────────────────────────
     is_free_tier = models.BooleanField(default=True, help_text="Consumed from the device's free report allowance.")
     price_charged_kes = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    wallet_applied_kes = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text=(
+            "Partial wallet balance earmarked toward this report's price at "
+            "checkout time (e.g. KES 36 of a KES 199 report). Only actually "
+            "debited from the wallet once the Paystack remainder is "
+            "confirmed paid -- see property_intel/signals.py."
+        ),
+    )
     is_paid = models.BooleanField(default=False)
     paystack_reference = models.CharField(
         max_length=100, blank=True, db_index=True,
