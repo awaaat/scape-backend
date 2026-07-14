@@ -671,8 +671,11 @@ def _nearby_estate(cell):
 # ===========================================================================
 
 def _generate_openers():
-    """Builds a giant list of opening sentences from component phrases."""
-    # Base patterns – each with placeholders for {dist_m}, {drive_phrase}, {town}, {frontage}, {dist_away}
+    """
+    Builds a giant list of opening sentences from component phrases.
+    All placeholders are written as literal strings with double braces
+    so they can be .format()'d later.
+    """
     intro_verbs = [
         "Located", "Situated", "Positioned", "Placed", "Set", "Found", "Sited",
         "Nestled", "Lying", "Sitting", "Offering", "Benefiting from",
@@ -685,10 +688,11 @@ def _generate_openers():
         "a mere {dist_m} metres, approximately {drive_phrase}",
         "{dist_m} metres, around {drive_phrase}",
     ]
-    town_part = "from {town} Centre"
-    frontage_part = "fronting {frontage}"
-    frontage_part2 = "with frontage on {frontage}"
-    frontage_part3 = "enjoying frontage on {frontage}"
+    frontage_parts = [
+        "fronting {frontage}",
+        "with frontage on {frontage}",
+        "enjoying frontage on {frontage}",
+    ]
     end_parts = [
         "this property offers excellent accessibility for residential or commercial development.",
         "this property offers outstanding accessibility for residential or commercial development.",
@@ -702,37 +706,37 @@ def _generate_openers():
         "this property is ideally placed for residential or commercial development.",
         "this property affords strong accessibility for a range of residential or commercial uses.",
     ]
-
-    # Town+frontage combos
     openers = []
+
+    # Town + frontage combos
     for verb in intro_verbs:
-        for d_phrase in distance_phrases:
+        for d in distance_phrases:
             for end in end_parts:
-                # With town and frontage
-                openers.append(f"{verb} {d_phrase} from {town} and {frontage_part}, {end}")
-                openers.append(f"{verb} {d_phrase} from {town} and {frontage_part2}, {end}")
-                openers.append(f"{verb} {d_phrase} from {town} and {frontage_part3}, {end}")
-                openers.append(f"{verb} {d_phrase} from {town}, {frontage_part}, {end}")
-                # Frontage first
-                openers.append(f"{frontage_part.capitalize()} and {verb.lower()} {d_phrase} from {town}, {end}")
-                openers.append(f"{frontage_part2.capitalize()} and {verb.lower()} {d_phrase} from {town}, {end}")
-                # With full distance away phrasing
-                openers.append(f"{verb} {d_phrase.replace('{dist_m} metres', '{dist_away}')} from {town} and {frontage_part}, {end}")
+                for f in frontage_parts:
+                    # Verb first, town + frontage
+                    openers.append(f"{verb} {d} from {{town}} and {f}, {end}")
+                    openers.append(f"{verb} {d} from {{town}}, {f}, {end}")
+                    # Frontage first, then verb
+                    openers.append(f"{f.capitalize()} and {verb.lower()} {d} from {{town}}, {end}")
+                    # with full distance away phrasing
+                    alt_d = d.replace("{dist_m} metres", "{dist_away}")
+                    openers.append(f"{verb} {alt_d} from {{town}} and {f}, {end}")
     # Town only
     for verb in intro_verbs:
-        for d_phrase in distance_phrases:
+        for d in distance_phrases:
             for end in end_parts:
-                openers.append(f"{verb} {d_phrase} from {town}, {end}")
-                openers.append(f"{verb} {d_phrase} from {town} centre, {end}")
-                openers.append(f"{verb} {d_phrase} from the heart of {town}, {end}")
-                openers.append(f"{verb} {d_phrase.replace('{dist_m} metres', '{dist_away}')} from {town}, {end}")
+                openers.append(f"{verb} {d} from {{town}}, {end}")
+                openers.append(f"{verb} {d} from {{town}} centre, {end}")
+                openers.append(f"{verb} {d} from the heart of {{town}}, {end}")
+                # with away phrasing
+                alt_d = d.replace("{dist_m} metres", "{dist_away}")
+                openers.append(f"{verb} {alt_d} from {{town}}, {end}")
     # Frontage only
     for verb in intro_verbs:
-        for end in end_parts:
-            openers.append(f"{verb} {frontage_part}, {end}")
-            openers.append(f"{verb} {frontage_part2}, {end}")
-            openers.append(f"{verb} {frontage_part3}, {end}")
-            openers.append(f"{frontage_part.capitalize()}, {verb.lower()} {end}")
+        for f in frontage_parts:
+            for end in end_parts:
+                openers.append(f"{verb} {f}, {end}")
+                openers.append(f"{f.capitalize()}, {verb.lower()} {end}")
     # Fallback (no town, no frontage)
     fallbacks = [
         "{location_line} offers strong development potential for residential or commercial use.",
@@ -740,10 +744,8 @@ def _generate_openers():
         "{location_line} is a prime candidate for residential or commercial development.",
         "{location_line} enjoys a strategic location with strong development upside.",
     ]
-    # Remove duplicates and return
-    # We'll keep as list; duplicates are okay but we can unique later
-    # Since we generate many, we'll just return a large list.
     return openers + fallbacks
+
 
 # Generate the actual pools
 _OPENERS_ALL = _generate_openers()
@@ -814,8 +816,6 @@ _SERVICE_CONNECTORS = [
     "{d}, easily accessible",
     "{d}, within a short stroll",
 ]
-
-# We'll keep these as lists; they are already huge.
 
 
 def _format_drive_phrase(minutes):
@@ -900,11 +900,11 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
     possible_openers = _OPENERS_ALL[:]  # copy
     # If no town, remove those that require {town}
     if town_label is None or dist_m is None or drive_phrase is None:
-        possible_openers = [t for t in possible_openers if "{town}" not in t and "{dist_m}" not in t and "{dist_away}" not in t]
+        possible_openers = [t for t in possible_openers if "{{town}}" not in t and "{{dist_m}}" not in t and "{{dist_away}}" not in t]
     else:
         # If no frontage, remove those that require {frontage}
         if not frontage_short:
-            possible_openers = [t for t in possible_openers if "{frontage}" not in t]
+            possible_openers = [t for t in possible_openers if "{{frontage}}" not in t]
         else:
             # keep all
             pass
@@ -914,7 +914,12 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
 
     opener = rng.choice(possible_openers)
 
-    # Format the opener
+    # Format the opener – note we use .format() with the actual values.
+    # The placeholders in the strings are written with double braces so they
+    # are literal. But we need to replace them with single braces for .format()
+    # Actually, the strings already have single braces because we wrote them
+    # as e.g. "from {town}" – they are format strings.
+    # So we just pass the values directly.
     opening_sentence = opener.format(
         dist_m=dist_m if dist_m is not None else "",
         drive_phrase=drive_phrase if drive_phrase else "",
