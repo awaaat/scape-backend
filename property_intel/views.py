@@ -392,10 +392,14 @@ class OTPVerifyView(APIView):
         report.save(update_fields=["status", "is_free_tier", "price_charged_kes", "wallet_applied_kes"])
         authorization_url, error = _initiate_report_payment(report, amount=remainder)
         if error:
+            # Genuine failure to start payment -- no checkout_url exists.
             return Response(
                 {"report_id": str(report.id), "status": report.status, "message": error},
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
+        # Success: checkout_url is ready. 200, not 402 -- axios (and any
+        # sane HTTP client) treats 4xx as an error response, so a "here's
+        # your checkout link" success case must not use an error status.
         return Response(
             {
                 "report_id": str(report.id),
@@ -405,7 +409,7 @@ class OTPVerifyView(APIView):
                 "wallet_applied_kes": str(wallet_applied) if wallet_applied > 0 else None,
                 "message": "Your free reports on this device were used up while verifying. Complete payment to generate this report.",
             },
-            status=status.HTTP_402_PAYMENT_REQUIRED,
+            status=status.HTTP_200_OK,
         )
 
 
@@ -551,13 +555,15 @@ class ReportCheckoutView(APIView):
             from payments.models import PaystackTransaction
             existing = PaystackTransaction.objects.filter(reference=report.paystack_reference).first()
             if existing and existing.authorization_url and existing.status == "pending":
+                # Reusing an already-started checkout is still a success --
+                # 200, so clients treat this the same as a fresh checkout_url.
                 return Response(
                     {
                         "report_id": str(report.id), "status": report.status,
                         "checkout_url": existing.authorization_url,
                         "message": "Complete payment to generate this report.",
                     },
-                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                    status=status.HTTP_200_OK,
                 )
 
         wallet_applied = report.wallet_applied_kes or Decimal("0")
@@ -571,11 +577,12 @@ class ReportCheckoutView(APIView):
                 {"report_id": str(report.id), "status": report.status, "error": error, "message": error},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+        # Success: checkout_url is ready -- 200, not 402. See note above.
         return Response(
             {
                 "report_id": str(report.id), "status": report.status,
                 "checkout_url": authorization_url, "amount_kes": str(remainder),
                 "message": "Complete payment to generate this report.",
             },
-            status=status.HTTP_402_PAYMENT_REQUIRED,
+            status=status.HTTP_200_OK,
         )
