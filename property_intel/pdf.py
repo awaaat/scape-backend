@@ -483,55 +483,71 @@ def _nearest_dist(amenity_lookup, *labels):
     return best
 
 
+def _nearest_named(amenity_lookup, *labels):
+    """Nearest (name, distance_m) across one or more amenity-lookup labels,
+    or None if none of those labels have a named, distance-bearing entry.
+    Suitability rationale must always cite the actual amenity by name --
+    never a bare category ('nearest retail') -- so this is used instead of
+    _nearest_dist() wherever a rationale string is built."""
+    best = None
+    for label in labels:
+        for e in amenity_lookup.get(label) or []:
+            d = e.get("distance_m")
+            name = e.get("name")
+            if d is None or not name:
+                continue
+            if best is None or d < best[1]:
+                best = (name, d)
+    return best
+
+
 def _development_suitability_table(cell):
     """Same scoring logic as the original report -- the template just
-    displays fewer rows now. Every rationale string cites the actual
-    nearest-amenity distance (e.g. 'Nearest university is 850 meters
-    away') instead of a vague 'Near educational institutions'.
+    displays fewer rows now. Every rationale string names the actual
+    amenity it's citing (e.g. 'Nearest university, Mount Kenya University,
+    is 850 meters away') -- never a bare, unnamed category claim like
+    'nearest retail is 300m away', which reads as an unverifiable rumor
+    rather than evidence.
     Returns [(dev_type, level, rationale), ...]."""
     amenity_fields = _discover_amenity_fields(cell)
     amenity_lookup = dict(amenity_fields)
-    has_university = "Universities" in amenity_lookup
-    has_retail = "Shopping" in amenity_lookup or "Supermarkets" in amenity_lookup
-    has_gated = "Gated Communities" in amenity_lookup
     has_student_housing = any(
         e.get("distance_m") is not None and e["distance_m"] <= STUDENT_HOUSING_PROXIMITY_M
         for e in amenity_lookup.get("Student Housing", [])
     )
 
-    uni_dist = _nearest_dist(amenity_lookup, "Universities")
-    retail_dist = _nearest_dist(amenity_lookup, "Shopping", "Supermarkets")
-    gated_dist = _nearest_dist(amenity_lookup, "Gated Communities")
+    university = _nearest_named(amenity_lookup, "Universities")
+    retail = _nearest_named(amenity_lookup, "Shopping", "Supermarkets")
+    gated = _nearest_named(amenity_lookup, "Gated Communities")
 
     nairobi = (cell.travel_times or {}).get("nairobi_cbd")
     commute_mins = round(nairobi["duration_s"] / 60) if nairobi and nairobi.get("duration_s") else None
 
     suitability = []
 
-    if has_student_housing and has_university:
-        suitability.append(("Student Housing", "Very High", f"Existing student accommodation confirms active rental market, with the nearest university {_format_distance_away(uni_dist)}"))
-    elif has_university and commute_mins and commute_mins < 45:
-        suitability.append(("Student Housing", "High", f"Nearest university is {_format_distance_away(uni_dist)}, close enough to drive rental demand"))
-    elif has_university:
-        suitability.append(("Student Housing", "Medium", f"Nearest university is {_format_distance_away(uni_dist)}"))
+    if has_student_housing and university:
+        suitability.append(("Student Housing", "Very High", f"Existing student accommodation confirms active rental market, with the nearest university, {university[0]}, {_format_distance_away(university[1])}"))
+    elif university and commute_mins and commute_mins < 45:
+        suitability.append(("Student Housing", "High", f"Nearest university, {university[0]}, is {_format_distance_away(university[1])}, close enough to drive rental demand"))
+    elif university:
+        suitability.append(("Student Housing", "Medium", f"Nearest university, {university[0]}, is {_format_distance_away(university[1])}"))
     else:
         suitability.append(("Student Housing", "Low", "Limited educational institutions in immediate area"))
 
-    if has_retail and has_university and has_gated:
-        suitability.append(("Apartments", "Very High", f"Nearest retail is {_format_distance_away(retail_dist)} and nearest gated community is {_format_distance_away(gated_dist)}, showing proven demand nearby"))
-    elif has_retail and has_university:
-        suitability.append(("Apartments", "High", f"Complete service ecosystem supports residential development, with the nearest retail {_format_distance_away(retail_dist)}"))
-    elif has_retail or has_university:
-        nearest_label = "retail" if has_retail else "university"
-        nearest_val = retail_dist if has_retail else uni_dist
-        suitability.append(("Apartments", "Medium", f"Nearest {nearest_label} is {_format_distance_away(nearest_val)}"))
+    if retail and university and gated:
+        suitability.append(("Apartments", "Very High", f"Nearest retail, {retail[0]}, is {_format_distance_away(retail[1])} and nearest gated community, {gated[0]}, is {_format_distance_away(gated[1])}, showing proven demand nearby"))
+    elif retail and university:
+        suitability.append(("Apartments", "High", f"Complete service ecosystem supports residential development, with the nearest retail, {retail[0]}, {_format_distance_away(retail[1])}"))
+    elif retail or university:
+        nearest_label, nearest_amenity = ("retail", retail) if retail else ("university", university)
+        suitability.append(("Apartments", "Medium", f"Nearest {nearest_label}, {nearest_amenity[0]}, is {_format_distance_away(nearest_amenity[1])}"))
     else:
         suitability.append(("Apartments", "Low", "Limited service infrastructure"))
 
-    if has_retail and commute_mins and commute_mins < 60:
-        suitability.append(("Mixed-Use", "Medium-High", f"Nearest retail is {_format_distance_away(retail_dist)}, with a reasonable commute supporting mixed-use"))
-    elif has_retail:
-        suitability.append(("Mixed-Use", "Medium", f"Nearest retail is {_format_distance_away(retail_dist)}"))
+    if retail and commute_mins and commute_mins < 60:
+        suitability.append(("Mixed-Use", "Medium-High", f"Nearest retail, {retail[0]}, is {_format_distance_away(retail[1])}, with a reasonable commute supporting mixed-use"))
+    elif retail:
+        suitability.append(("Mixed-Use", "Medium", f"Nearest retail, {retail[0]}, is {_format_distance_away(retail[1])}"))
     else:
         suitability.append(("Mixed-Use", "Low", "Limited commercial ecosystem"))
 
@@ -1113,12 +1129,18 @@ def render_report_pdf(pin, cell):
         tel_link = _tel_link(broker_phone)
         contact_bits = []
         if whatsapp_link:
-            contact_bits.append(f"{broker_phone} \u00b7 WhatsApp")
+            contact_bits.append(f'<a href="{whatsapp_link}" style="color:inherit;text-decoration:none;">{escape(broker_phone)} \u00b7 WhatsApp</a>')
         elif tel_link:
-            contact_bits.append(broker_phone)
+            contact_bits.append(f'<a href="{tel_link}" style="color:inherit;text-decoration:none;">{escape(broker_phone)}</a>')
         if broker_email:
-            contact_bits.append(broker_email)
-        contact_line = " \u00b7 ".join(contact_bits) if contact_bits else DEFAULT_CONTACT_LINE
+            contact_bits.append(f'<a href="mailto:{escape(broker_email)}" style="color:inherit;text-decoration:none;">{escape(broker_email)}</a>')
+        if contact_bits:
+            contact_line = Markup(" \u00b7 ".join(contact_bits))
+        else:
+            support_whatsapp = _whatsapp_link(SCAPE_SUPPORT_PHONE)
+            contact_line = Markup(
+                f'<a href="{support_whatsapp}" style="color:inherit;text-decoration:none;">{DEFAULT_CONTACT_LINE}</a>'
+            ) if support_whatsapp else DEFAULT_CONTACT_LINE
 
         template = _jinja_env.get_template("property_location_report.html.j2")
         html_string = template.render(
