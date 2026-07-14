@@ -1059,7 +1059,7 @@ def render_report_pdf(pin, cell):
         description_html = _build_description_html(
             town_label, nearest_town, frontage_name, frontage_dist,
             evidence_points, estate, density_counts,
-            location_line=location_line, seed=getattr(pin, "id", None),
+            location_line=location_line, seed=str(pin.id) if pin.id else None,
         )
         if description_html is None:
             description_html = Markup(escape(
