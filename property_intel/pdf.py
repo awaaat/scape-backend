@@ -325,7 +325,9 @@ def _summary_text(pin, cell, investment_score, accessibility_score):
     lead = location_name
     if nearest_town:
         town_label, minutes, km = nearest_town
-        if minutes is not None:
+        if km == 0.0:
+            lead += f", in {town_label}"
+        elif minutes is not None:
             lead += f", {minutes} minutes from {town_label}"
         else:
             lead += f", {km} km from {town_label}"
@@ -340,7 +342,9 @@ def _summary_text(pin, cell, investment_score, accessibility_score):
     nearest_city = _nearest_city_summary(cell)
     if nearest_city:
         city_label, minutes, km = nearest_city
-        if minutes is not None:
+        if km == 0.0:
+            bullets.append(f"This property is located within {city_label}.")
+        elif minutes is not None:
             bullets.append(f"{city_label} is a {minutes}-minute drive away.")
         elif km is not None:
             bullets.append(f"{city_label} is approximately {km} km away.")
@@ -1140,9 +1144,25 @@ def render_report_pdf(pin, cell):
         # Next Steps
         story.append(Paragraph("NEXT STEPS", styles['CustomHeading2']))
         story.append(Spacer(1, 2 * mm))
+        broker_email = getattr(getattr(pin, "broker", None), "email", None)
+        broker_phone = _broker_phone(pin)
+        whatsapp_link = _whatsapp_link(broker_phone)
+        tel_link = _tel_link(broker_phone)
+
+        contact_channels = []
+        if broker_email:
+            contact_channels.append(broker_email)
+        if whatsapp_link:
+            contact_channels.append(f'<link href="{whatsapp_link}"><font color="#1a7d3c"><b>WhatsApp {broker_phone}</b></font></link>')
+        if tel_link:
+            contact_channels.append(f'<link href="{tel_link}"><font color="#1a4d7d"><b>Call {broker_phone}</b></font></link>')
+
+        if contact_channels:
+            contact_bit = f" Contact via {' or '.join(contact_channels)} to discuss pricing, site visits, or next steps."
+        else:
+            contact_bit = " Reach out to whoever shared this report to discuss pricing, site visits, or next steps."
         story.append(Paragraph(
-            "This report was generated via Scape Data Solutions. "
-            "Conduct independent due diligence before making investment decisions.",
+            f"This report was generated via Scape Data Solutions.{contact_bit}",
             styles['JustifiedNormal']
         ))
         story.append(Spacer(1, 6 * mm))
