@@ -12,6 +12,7 @@ import re
 from datetime import datetime
 
 import requests
+from django.conf import settings
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -56,6 +57,52 @@ PRICE_BENCHMARKS = {
 
 
 KENYA_CITY_NAMES = {"NAIROBI", "MOMBASA", "KISUMU", "NAKURU"}
+
+# Scape's own support line for the branded footer -- set
+# SCAPE_SUPPORT_PHONE in settings/env once decided. Left blank (not a
+# placeholder number) until then, so the footer just omits it.
+SCAPE_SUPPORT_PHONE = getattr(settings, "SCAPE_SUPPORT_PHONE", "")
+
+
+def _whatsapp_link(phone):
+    """Builds a wa.me click-to-chat link from a canonical +254XXXXXXXXX
+    phone number. Returns None -- never a broken link -- for anything
+    that doesn't resolve to a plausible Kenyan mobile number."""
+    if not phone:
+        return None
+    digits = re.sub(r"\D", "", phone)
+    if digits.startswith("0") and len(digits) == 10:
+        digits = "254" + digits[1:]
+    if not re.match(r"^254[17]\d{8}$", digits):
+        return None
+    return f"https://wa.me/{digits}"
+
+
+def _tel_link(phone):
+    """Builds a tel: click-to-call link from a canonical +254XXXXXXXXX
+    phone number. Returns None for anything invalid."""
+    if not phone:
+        return None
+    digits = re.sub(r"\D", "", phone)
+    if digits.startswith("0") and len(digits) == 10:
+        digits = "254" + digits[1:]
+    if not re.match(r"^254[17]\d{8}$", digits):
+        return None
+    return f"tel:+{digits}"
+
+
+def _broker_phone(pin):
+    """Best-effort lookup of the submitting broker's phone, sourced from
+    their UserSignup profile (collected at signup). Returns None for
+    anonymous submissions or brokers who never signed up; never raises."""
+    broker = getattr(pin, "broker", None)
+    user = getattr(broker, "user", None)
+    if not user:
+        return None
+    try:
+        return user.signup_profile.phone
+    except Exception:
+        return None
 
 
 def _town_or_city_label(name):
@@ -1076,12 +1123,39 @@ def render_report_pdf(pin, cell):
         story.append(Paragraph("NEXT STEPS", styles['CustomHeading2']))
         story.append(Spacer(1, 2 * mm))
         broker_email = getattr(getattr(pin, "broker", None), "email", None)
-        contact_bit = f" Contact {broker_email} to discuss pricing, site visits, or next steps." if broker_email else " Contact the broker who shared this report to discuss pricing, site visits, or next steps."
+        broker_phone = _broker_phone(pin)
+        whatsapp_link = _whatsapp_link(broker_phone)
+        tel_link = _tel_link(broker_phone)
+
+        contact_channels = []
+        if broker_email:
+            contact_channels.append(broker_email)
+        if whatsapp_link:
+            contact_channels.append(f'<link href="{whatsapp_link}"><font color="#1a7d3c"><b>WhatsApp {broker_phone}</b></font></link>')
+        if tel_link:
+            contact_channels.append(f'<link href="{tel_link}"><font color="#1a4d7d"><b>Call {broker_phone}</b></font></link>')
+
+        if contact_channels:
+            contact_bit = f" Contact the broker via {' or '.join(contact_channels)} to discuss pricing, site visits, or next steps."
+        else:
+            contact_bit = " Contact the broker who shared this report to discuss pricing, site visits, or next steps."
         story.append(Paragraph(
             f"This report was generated via Scape Data Solutions.{contact_bit}",
             styles['JustifiedNormal']
         ))
         story.append(Spacer(1, 6 * mm))
+
+        # Branded footer
+        footer_contact_line = "property.scapedatasolutions.com &nbsp;|&nbsp; info@scapedatasolutions.com"
+        if SCAPE_SUPPORT_PHONE:
+            footer_contact_line += f" &nbsp;|&nbsp; {SCAPE_SUPPORT_PHONE}"
+        story.append(Paragraph(
+            "<b>Powered by Scape Property Intelligence</b><br/>"
+            "Generate professional property reports in under 60 seconds.<br/>"
+            f"{footer_contact_line}",
+            styles['Normal']
+        ))
+        story.append(Spacer(1, 3 * mm))
 
         # Footer
         story.append(Paragraph(
