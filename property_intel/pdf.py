@@ -216,6 +216,26 @@ def _town_qualified_road_name(cell, road_name):
     return road_name
 
 
+ROAD_DISTANCE_ALONG_THRESHOLD_M = 20  # below this, "~0.0km away" reads as nonsense
+
+
+def _format_road_distance(name, distance_m):
+    """
+    Turns (name, distance_m) into a natural phrase, with no 'major road'
+    label anywhere:
+      - under 20m         -> "Right along X"           (was "~0.0km away")
+      - under 1000m        -> "X (~140m away)"
+      - 1000m and up        -> "X (~2.3km away)"
+    """
+    if distance_m is None:
+        return name
+    if distance_m < ROAD_DISTANCE_ALONG_THRESHOLD_M:
+        return f"Right along {name}"
+    if distance_m < 1000:
+        return f"{name} (~{int(round(distance_m))}m away)"
+    return f"{name} (~{distance_m / 1000:.1f}km away)"
+
+
 def _score_accessibility(cell):
     """Calculate accessibility score based on amenity density and commute times"""
     score = 50
@@ -489,11 +509,12 @@ def _investment_contributors(cell, investment_score):
     elif getattr(cell, "on_paved_road", None) is False:
         reasons.append(("watch", "No mapped road detected nearby -- verify physical access before buying"))
 
-    major_name = _town_qualified_road_name(cell, getattr(cell, "nearest_major_road_name", None))
-    major_dist = getattr(cell, "nearest_major_road_distance_m", None)
-    if major_name and major_dist:
-        km = major_dist / 1000
-        reasons.append(("strength", f"~{km:.1f}km from {major_name} (major road)"))
+    nearby_roads = getattr(cell, "nearby_roads", None) or []
+    if nearby_roads:
+        closest = nearby_roads[0]
+        name = _town_qualified_road_name(cell, closest.get("name"))
+        if name:
+            reasons.append(("strength", _format_road_distance(name, closest.get("distance_m"))))
 
     if any(label == "Universities" for label, _ in amenity_fields):
         reasons.append(("strength", "Strong student population supports rental demand"))
@@ -1128,13 +1149,11 @@ def render_report_pdf(pin, cell):
             else:
                 details.append("Road Access: No mapped road detected nearby -- verify physical access before purchase")
 
-        major_name = _town_qualified_road_name(cell, getattr(cell, "nearest_major_road_name", None))
-        major_dist = getattr(cell, "nearest_major_road_distance_m", None)
-        if major_name and major_dist:
-            km = major_dist / 1000
-            details.append(f"Nearest Major Road: {major_name} (~{km:.1f}km away)")
-        elif major_name:
-            details.append(f"Nearest Major Road: {major_name}")
+        nearby_roads = getattr(cell, "nearby_roads", None) or []
+        for road in nearby_roads[:3]:
+            name = _town_qualified_road_name(cell, road.get("name"))
+            if name:
+                details.append(f"Nearby Road: {_format_road_distance(name, road.get('distance_m'))}")
         
         for detail in details:
             story.append(Paragraph(f"• {detail}", styles['JustifiedNormal']))

@@ -157,9 +157,20 @@ class LocationCell(models.Model):
     road_context_fetched_at = models.DateTimeField(null=True, blank=True)
 
     # ── Major road context (Places Text Search, curated highway list) ──
+    # Deprecated in favor of nearby_roads below -- left in place (unused
+    # going forward) rather than dropped, to avoid a destructive migration.
     nearest_major_road_name = models.CharField(max_length=255, null=True, blank=True)
     nearest_major_road_distance_m = models.PositiveIntegerField(null=True, blank=True)
     major_road_context_fetched_at = models.DateTimeField(null=True, blank=True)
+
+    # ── Nearby roads (OSM Overpass, falls back to Google Roads API) ────
+    # Up to 3 nearest real roads by actual proximity, nearest first --
+    # NOT filtered to any "major"/"minor" classification. Each entry:
+    # {"name": str, "distance_m": int}.
+    nearby_roads = models.JSONField(
+        default=list, blank=True,
+        help_text="Up to 3 nearest named roads, nearest first: [{'name':.., 'distance_m':..}, ...]. Not filtered by road classification.",
+    )
 
     # ── Travel times (Routes API) ─────────────────────────────────────
     # {"nairobi_cbd": {"duration_s": int, "distance_m": int}, "local_cbd": {...}}
