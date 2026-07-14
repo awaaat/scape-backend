@@ -48,9 +48,20 @@ class ResolveSuspectAmenitiesTests(TestCase):
     @patch("property_intel.amenity_verification._query_osm_candidates")
     def test_confident_osm_match_corrects_distance(self, mock_query):
         mock_query.return_value = [{"name": "Shell", "brand": "Shell", "lat": 0.5200, "lng": 35.2750}]
-        cell = make_cell(nearby_petrol_stations=[
-            {"name": "Shell petrol station", "lat": 0.51427, "lng": 35.26978, "distance_m": 3},
-        ])
+        # Verification only ever triggers for entries caught in a cluster
+        # of 2+ categories sharing a coordinate (cost control -- see
+        # detect_coincident_clusters/MIN_CLUSTER_SIZE). A single entry
+        # alone never forms a cluster, so this needs a second category at
+        # the same point, matching the real "3m cluster" scenario this
+        # module exists to catch.
+        cell = make_cell(
+            nearby_petrol_stations=[
+                {"name": "Shell petrol station", "lat": 0.51427, "lng": 35.26978, "distance_m": 3},
+            ],
+            nearby_schools=[
+                {"name": "Some School", "lat": 0.51427, "lng": 35.26978, "distance_m": 3},
+            ],
+        )
         av.resolve_suspect_amenities(cell)
         entry = cell.nearby_petrol_stations[0]
         self.assertEqual(entry["verified_via"], "osm")

@@ -313,6 +313,12 @@ def _search_nearby(cell: LocationCell, included_type):
         name = place.get("displayName", {}).get("text", "")
         if _is_settlement_name(name):
             continue
+        business_status = place.get("businessStatus", "")
+        if business_status == "CLOSED_PERMANENTLY":
+            # Google has confirmed this place no longer exists at this
+            # location (demolished, moved, rebranded) -- never point a
+            # broker to a building that isn't there anymore.
+            continue
         results.append({
             "name": name,
             "place_id": place.get("id", ""),
@@ -321,7 +327,8 @@ def _search_nearby(cell: LocationCell, included_type):
             "rating": place.get("rating"),
             "user_rating_count": place.get("userRatingCount"),
             "price_level": place.get("priceLevel"),
-            "business_status": place.get("businessStatus", ""),
+            "business_status": business_status,
+            "temporarily_closed": business_status == "CLOSED_TEMPORARILY",
             "open_now": hours.get("openNow"),
             "photo_name": (place.get("photos") or [{}])[0].get("name"),
             "distance_m": _haversine_m(center_lat, center_lng, loc.get("latitude"), loc.get("longitude")),
@@ -1019,13 +1026,17 @@ def _search_text(cell: LocationCell, text_query, radius_m=5000.0):
         name = place.get("displayName", {}).get("text", "")
         if _is_settlement_name(name):
             continue
+        business_status = place.get("businessStatus", "")
+        if business_status == "CLOSED_PERMANENTLY":
+            continue
         results.append({
             "name": name,
             "place_id": place.get("id", ""),
             "lat": loc.get("latitude"),
             "lng": loc.get("longitude"),
             "rating": place.get("rating"),
-            "business_status": place.get("businessStatus", ""),
+            "business_status": business_status,
+            "temporarily_closed": business_status == "CLOSED_TEMPORARILY",
             "photo_name": (place.get("photos") or [{}])[0].get("name"),
             "distance_m": _haversine_m(center_lat, center_lng, loc.get("latitude"), loc.get("longitude")),
         })
@@ -1104,6 +1115,37 @@ def _null_out_coincident_zero_distances(cell: LocationCell):
     if changed_fields:
         cell.save(update_fields=list(changed_fields))
     return cell
+
+
+def verify_amenities_step(cell: LocationCell):
+    """
+    Runs the OSM cross-check cascade (see amenity_verification.py) for any
+    amenities caught in a suspicious coincident-coordinate cluster: verify
+    against OpenStreetMap, suppress if no confident match, or drop if the
+    category has no OSM equivalent at all. This is the sophisticated
+    cross-check; _null_out_coincident_zero_distances (above) is a cheaper,
+    blunter safety net that catches distance-collision cases this doesn't
+    (different clustering key), so both run -- this one first, since it
+    can actually recover a real distance via OSM instead of just blanking
+    it.
+
+    NOTE: this was previously wired into enrich_location_cell's steps list
+    and got silently dropped in a later revision -- it had full test
+    coverage in tests/test_amenity_verification.py this whole time, but
+    was never actually being called. Re-added here.
+
+    Local import to avoid a circular import (amenity_verification imports
+    _haversine_m/_log_call/OSM_OVERPASS_URL from this module). Wrapped in
+    a broad except -- a bug in the verification cascade must never take
+    down report generation for everyone; worst case, we fall back to
+    whatever _null_out_coincident_zero_distances already did.
+    """
+    from . import amenity_verification
+    try:
+        return amenity_verification.resolve_suspect_amenities(cell)
+    except Exception as exc:  # noqa: BLE001 -- defensive, see docstring
+        logger.warning("Amenity verification cascade failed for cell %s: %s", cell.geohash, exc)
+        return cell
 
 
 # ---------------------------------------------------------------------------
@@ -1409,6 +1451,7 @@ def enrich_location_cell(cell: LocationCell):
         ("road context", fetch_road_context),
         ("nearby roads context", fetch_nearby_roads_context),
         ("text search amenities", fetch_text_search_amenities),
+        ("amenity verification cascade", verify_amenities_step),
         ("coincident distance cleanup", _null_out_coincident_zero_distances),
         ("amenity photos", fetch_amenity_photos),
     ]

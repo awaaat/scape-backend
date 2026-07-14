@@ -44,6 +44,14 @@ OSM_VERIFY_SEARCH_RADII_M = [500, 1500, 3000, 5000]
 OSM_VERIFY_TIMEOUT_SECONDS = 15
 NAME_SIMILARITY_THRESHOLD = 0.6
 
+# Character-level similarity alone misses cases like "Moi Girls Eldoret"
+# (Google's name) vs "Moi Girls High School" (OSM's name) -- same place,
+# but the town-name suffix vs the official-designation suffix drag the
+# SequenceMatcher ratio below threshold even though the core name matches.
+# Word-overlap catches this: how much of the SMALLER name's word set is
+# also in the other name.
+TOKEN_OVERLAP_THRESHOLD = 0.6
+
 # Category -> OSM tag filter(s). Categories absent from this map have no
 # reliable OSM equivalent in Kenya and go straight to tier 2 (drop) when
 # caught in a cluster, since tier 3 verification isn't attemptable.
@@ -77,6 +85,7 @@ def _names_match(google_name, candidate_name, candidate_brand=None):
     g = _normalize_name(google_name)
     if not g:
         return False
+    g_tokens = set(g.split())
     for cand in filter(None, [candidate_name, candidate_brand]):
         c = _normalize_name(cand)
         if not c:
@@ -85,6 +94,12 @@ def _names_match(google_name, candidate_name, candidate_brand=None):
             return True
         if difflib.SequenceMatcher(None, g, c).ratio() >= NAME_SIMILARITY_THRESHOLD:
             return True
+        c_tokens = set(c.split())
+        if g_tokens and c_tokens:
+            overlap = g_tokens & c_tokens
+            smaller = min(len(g_tokens), len(c_tokens))
+            if smaller and len(overlap) / smaller >= TOKEN_OVERLAP_THRESHOLD:
+                return True
     return False
 
 

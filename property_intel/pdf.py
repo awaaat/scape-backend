@@ -141,17 +141,29 @@ def _label_from_field_name(field_name):
 def _discover_amenity_fields(cell):
     """Every model field starting with 'nearby_' that's a non-empty list --
     generic, so any future amenity category shows up with zero changes.
-    Entries with distance_m is None (suppressed by the OSM verification
-    cascade in amenity_verification.py -- coincident-geocode entries that
-    couldn't be confidently verified) are excluded here, at the single
-    choke point every report section reads through. This is the only
-    place that filter needs to live."""
+
+    Two defensive filters run here, at the single choke point every report
+    section reads through:
+      - distance_m is None: suppressed by the OSM verification cascade in
+        amenity_verification.py, or by the coincident-distance cleanup --
+        either way, an unreliable/unrecoverable distance.
+      - business_status == CLOSED_PERMANENTLY: Google has confirmed this
+        place no longer exists. Filtered at ingest time too (see
+        google_client.py's _search_nearby/_search_text), but ALSO checked
+        here so any LocationCell cached before that filter existed
+        self-heals immediately, rather than showing stale closed places
+        for up to LOCATION_CELL_STALE_AFTER_DAYS until its next re-fetch.
+    """
     found = []
     for field in cell._meta.get_fields():
         name = getattr(field, "name", "")
         if name.startswith("nearby_"):
             value = getattr(cell, name, None) or []
-            filtered = [e for e in value if e.get("distance_m") is not None]
+            filtered = [
+                e for e in value
+                if e.get("distance_m") is not None
+                and e.get("business_status") != "CLOSED_PERMANENTLY"
+            ]
             if filtered:
                 found.append((_label_from_field_name(name), filtered))
     return found
