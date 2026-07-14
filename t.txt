@@ -1,0 +1,355 @@
+.
+├── backend
+│   ├── asgi.py
+│   ├── celery.py
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── celery.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── settings.cpython-312.pyc
+│   │   └── urls.cpython-312.pyc
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py
+├── enrichment
+│   ├── admin.py
+│   ├── apps.py
+│   ├── __init__.py
+│   ├── migrations
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       └── __init__.cpython-312.pyc
+│   ├── models.py
+│   ├── __pycache__
+│   │   ├── admin.cpython-312.pyc
+│   │   ├── apps.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   └── models.cpython-312.pyc
+│   ├── services.py
+│   └── views.py
+├── jobs
+│   ├── admin.py
+│   ├── apps.py
+│   ├── constants.py
+│   ├── email.py
+│   ├── __init__.py
+│   ├── migrations
+│   │   ├── 0001_initial.py
+│   │   ├── 0002_expand_application_schema.py
+│   │   ├── 0003_remove_educationentry_auto_extracted_and_more.py
+│   │   ├── 0004_alter_jobapplication_resume_storage_path.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── 0001_initial.cpython-312.pyc
+│   │       ├── 0002_expand_application_schema.cpython-312.pyc
+│   │       ├── 0003_remove_educationentry_auto_extracted_and_more.cpython-312.pyc
+│   │       ├── 0004_alter_jobapplication_resume_storage_path.cpython-312.pyc
+│   │       └── __init__.cpython-312.pyc
+│   ├── models.py
+│   ├── __pycache__
+│   │   ├── admin.cpython-312.pyc
+│   │   ├── apps.cpython-312.pyc
+│   │   ├── constants.cpython-312.pyc
+│   │   ├── email.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── models.cpython-312.pyc
+│   │   ├── serializers.cpython-312.pyc
+│   │   ├── urls.cpython-312.pyc
+│   │   └── views.cpython-312.pyc
+│   ├── resume_parser.py
+│   ├── serializers.py
+│   ├── templates
+│   │   └── email
+│   │       ├── admin_new_application.html
+│   │       └── application_received.html
+│   ├── urls.py
+│   └── views.py
+├── leads
+│   ├── admin.py
+│   ├── apps.py
+│   ├── email.py
+│   ├── __init__.py
+│   ├── management
+│   │   ├── commands
+│   │   │   ├── __init__.py
+│   │   │   └── test_email.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       └── __init__.cpython-312.pyc
+│   ├── migrations
+│   │   ├── 0001_initial.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── 0001_initial.cpython-312.pyc
+│   │       └── __init__.cpython-312.pyc
+│   ├── models.py
+│   ├── __pycache__
+│   │   ├── admin.cpython-312.pyc
+│   │   ├── apps.cpython-312.pyc
+│   │   ├── email.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── models.cpython-312.pyc
+│   │   ├── serializers.cpython-312.pyc
+│   │   ├── urls.cpython-312.pyc
+│   │   └── views.cpython-312.pyc
+│   ├── serializers.py
+│   ├── templates
+│   │   └── email
+│   │       ├── admin_notification.html
+│   │       ├── logo_email.png
+│   │       └── user_welcome.html
+│   ├── tests.py
+│   ├── urls.py
+│   └── views.py
+├── manage.py
+├── payments
+│   ├── admin.py
+│   ├── apps.py
+│   ├── emails.py
+│   ├── __init__.py
+│   ├── migrations
+│   │   ├── 0001_initial.py
+│   │   ├── 0002_paystacktransaction_authorization_details.py
+│   │   ├── 0003_wallet_and_ledger.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── 0001_initial.cpython-312.pyc
+│   │       ├── 0002_paystacktransaction_authorization_details.cpython-312.pyc
+│   │       ├── 0003_wallet_and_ledger.cpython-312.pyc
+│   │       └── __init__.cpython-312.pyc
+│   ├── models.py
+│   ├── paystack.py
+│   ├── __pycache__
+│   │   ├── admin.cpython-312.pyc
+│   │   ├── apps.cpython-312.pyc
+│   │   ├── emails.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── models.cpython-312.pyc
+│   │   ├── paystack.cpython-312.pyc
+│   │   ├── serializers.cpython-312.pyc
+│   │   ├── services.cpython-312.pyc
+│   │   ├── signals.cpython-312.pyc
+│   │   ├── urls.cpython-312.pyc
+│   │   ├── views.cpython-312.pyc
+│   │   └── wallet_signals.cpython-312.pyc
+│   ├── serializers.py
+│   ├── services.py
+│   ├── signals.py
+│   ├── templates
+│   │   └── email
+│   │       ├── payment_failed.html
+│   │       └── payment_receipt.html
+│   ├── tests
+│   │   ├── __init__.py
+│   │   ├── test_models.py
+│   │   ├── test_services.py
+│   │   └── test_views.py
+│   ├── urls.py
+│   ├── views.py
+│   └── wallet_signals.py
+├── property_intel
+│   ├── admin.py
+│   ├── amenity_verification.py
+│   ├── apps.py
+│   ├── fraud.py
+│   ├── google_client.py
+│   ├── __init__.py
+│   ├── ip_intel.py
+│   ├── kenya_towns_final.csv
+│   ├── kenya_towns_geocoded.csv
+│   ├── kenya_towns.py
+│   ├── migrations
+│   │   ├── 0001_initial.py
+│   │   ├── 0002_broker_user_and_more.py
+│   │   ├── 0003_locationcell_nearby_restaurants_and_more.py
+│   │   ├── 0004_locationcell_elevation_fetched_at_and_more.py
+│   │   ├── 0005_alter_devicefingerprint_free_reports_remaining.py
+│   │   ├── 0006_locationcell_air_quality_forecast_fetched_at_and_more.py
+│   │   ├── 0007_alter_propertypin_input_type.py
+│   │   ├── 0008_locationcell_nearest_road_name_and_more.py
+│   │   ├── 0009_locationcell_major_road_context_fetched_at_and_more.py
+│   │   ├── 0010_propertyreport_wallet_applied_kes.py
+│   │   ├── 0011_locationcell_nearby_roads.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── 0001_initial.cpython-312.pyc
+│   │       ├── 0002_broker_user_and_more.cpython-312.pyc
+│   │       ├── 0003_locationcell_nearby_restaurants_and_more.cpython-312.pyc
+│   │       ├── 0004_locationcell_elevation_fetched_at_and_more.cpython-312.pyc
+│   │       ├── 0005_alter_devicefingerprint_free_reports_remaining.cpython-312.pyc
+│   │       ├── 0006_locationcell_air_quality_forecast_fetched_at_and_more.cpython-312.pyc
+│   │       ├── 0007_alter_propertypin_input_type.cpython-312.pyc
+│   │       ├── 0008_locationcell_nearest_road_name_and_more.cpython-312.pyc
+│   │       ├── 0009_locationcell_major_road_context_fetched_at_and_more.cpython-312.pyc
+│   │       ├── 0010_propertyreport_wallet_applied_kes.cpython-312.pyc
+│   │       ├── 0011_locationcell_nearby_roads.cpython-312.pyc
+│   │       └── __init__.cpython-312.pyc
+│   ├── models.py
+│   ├── otp.py
+│   ├── pdf.py
+│   ├── __pycache__
+│   │   ├── admin.cpython-312.pyc
+│   │   ├── amenity_verification.cpython-312.pyc
+│   │   ├── apps.cpython-312.pyc
+│   │   ├── fraud.cpython-312.pyc
+│   │   ├── google_client.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── ip_intel.cpython-312.pyc
+│   │   ├── kenya_towns.cpython-312.pyc
+│   │   ├── models.cpython-312.pyc
+│   │   ├── otp.cpython-312.pyc
+│   │   ├── pdf.cpython-312.pyc
+│   │   ├── serializers.cpython-312.pyc
+│   │   ├── services.cpython-312.pyc
+│   │   ├── signals.cpython-312.pyc
+│   │   ├── storage.cpython-312.pyc
+│   │   ├── tasks.cpython-312.pyc
+│   │   ├── urls.cpython-312.pyc
+│   │   └── views.cpython-312.pyc
+│   ├── serializers.py
+│   ├── services.py
+│   ├── signals.py
+│   ├── storage.py
+│   ├── tasks.py
+│   ├── templates
+│   │   └── property_location_report.html.j2
+│   ├── tests
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── test_amenity_verification.cpython-312.pyc
+│   │   │   ├── test_fraud.cpython-312.pyc
+│   │   │   ├── test_payment_integration.cpython-312.pyc
+│   │   │   ├── test_services.cpython-312.pyc
+│   │   │   ├── test_stale_data_filtering.cpython-312.pyc
+│   │   │   └── test_tasks.cpython-312.pyc
+│   │   ├── test_amenity_verification.py
+│   │   ├── test_fraud.py
+│   │   ├── test_payment_integration.py
+│   │   ├── test_services.py
+│   │   ├── test_stale_data_filtering.py
+│   │   └── test_tasks.py
+│   ├── urls.py
+│   └── views.py
+├── requirements.txt
+├── static
+│   └── logo_email.png
+├── t.txt
+├── users
+│   ├── admin.py
+│   ├── apps.py
+│   ├── emails.py
+│   ├── __init__.py
+│   ├── migrations
+│   │   ├── 0001_initial.py
+│   │   ├── 0002_usersignup_user.py
+│   │   ├── 0003_alter_usersignup_phone.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── 0001_initial.cpython-312.pyc
+│   │       ├── 0002_usersignup_user.cpython-312.pyc
+│   │       ├── 0003_alter_usersignup_phone.cpython-312.pyc
+│   │       └── __init__.cpython-312.pyc
+│   ├── models.py
+│   ├── phone_utils.py
+│   ├── __pycache__
+│   │   ├── admin.cpython-312.pyc
+│   │   ├── apps.cpython-312.pyc
+│   │   ├── emails.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── models.cpython-312.pyc
+│   │   ├── phone_utils.cpython-312.pyc
+│   │   ├── serializers.cpython-312.pyc
+│   │   ├── urls.cpython-312.pyc
+│   │   └── views.cpython-312.pyc
+│   ├── serializers.py
+│   ├── templates
+│   │   └── email
+│   │       ├── verification_email.html
+│   │       └── welcome_email.html
+│   ├── tests.py
+│   ├── urls.py
+│   └── views.py
+├── venv
+│   ├── bin
+│   │   ├── activate
+│   │   ├── activate.csh
+│   │   ├── activate.fish
+│   │   ├── Activate.ps1
+│   │   ├── celery
+│   │   ├── cffi-gen-src
+│   │   ├── django-admin
+│   │   ├── docutils
+│   │   ├── dumppdf.py
+│   │   ├── gunicorn
+│   │   ├── httpx
+│   │   ├── idna
+│   │   ├── jp.py
+│   │   ├── normalizer
+│   │   ├── pdf2txt.py
+│   │   ├── pdfplumber
+│   │   ├── pip
+│   │   ├── pip3
+│   │   ├── pip3.12
+│   │   ├── __pycache__
+│   │   │   ├── dumppdf.cpython-312.pyc
+│   │   │   ├── jp.cpython-312.pyc
+│   │   │   └── pdf2txt.cpython-312.pyc
+│   │   ├── pypdfium2
+│   │   ├── python -> python3
+│   │   ├── python3 -> /usr/bin/python3
+│   │   ├── python3.12 -> python3
+│   │   ├── rst2html
+│   │   ├── rst2html4
+│   │   ├── rst2html5
+│   │   ├── rst2latex
+│   │   ├── rst2man
+│   │   ├── rst2odt
+│   │   ├── rst2pseudoxml
+│   │   ├── rst2s5
+│   │   ├── rst2xetex
+│   │   ├── rst2xml
+│   │   ├── sqlformat
+│   │   └── websockets
+│   ├── include
+│   │   └── python3.12
+│   ├── lib
+│   │   └── python3.12
+│   │       └── site-packages
+│   ├── lib64 -> lib
+│   └── pyvenv.cfg
+└── visitors
+    ├── admin.py
+    ├── apps.py
+    ├── __init__.py
+    ├── management
+    │   ├── commands
+    │   │   └── __init__.py
+    │   ├── __init__.py
+    │   └── __pycache__
+    │       └── __init__.cpython-312.pyc
+    ├── middleware.py
+    ├── migrations
+    │   ├── 0001_initial.py
+    │   ├── 0002_coldprospectproxy_visitor_city_and_more.py
+    │   ├── __init__.py
+    │   └── __pycache__
+    │       ├── 0001_initial.cpython-312.pyc
+    │       ├── 0002_coldprospectproxy_visitor_city_and_more.cpython-312.pyc
+    │       └── __init__.cpython-312.pyc
+    ├── models.py
+    ├── __pycache__
+    │   ├── admin.cpython-312.pyc
+    │   ├── apps.cpython-312.pyc
+    │   ├── __init__.cpython-312.pyc
+    │   ├── middleware.cpython-312.pyc
+    │   ├── models.cpython-312.pyc
+    │   ├── serializers.cpython-312.pyc
+    │   ├── urls.cpython-312.pyc
+    │   └── views.cpython-312.pyc
+    ├── serializers.py
+    ├── tests.py
+    ├── urls.py
+    └── views.py
+
+59 directories, 294 files
