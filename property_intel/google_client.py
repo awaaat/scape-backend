@@ -17,6 +17,7 @@ fetch the image bytes server-side and re-upload to our own storage
 (property_intel/storage.py), then store OUR url on the cell.
 """
 import logging
+import re
 from datetime import timedelta
 
 import requests
@@ -537,6 +538,54 @@ def fetch_travel_times(cell: LocationCell):
 # Kenya, not just Nairobi's commuter belt.
 # ---------------------------------------------------------------------------
 
+_ROAD_NAME_FROM_INSTRUCTION = re.compile(r"on(?:to)?\s+(.+?)(?:,|\s+toward|\s+for|\s*$)", re.IGNORECASE)
+
+
+def _extract_road_name(instruction):
+    """Pulls a road name out of a Routes API navigation instruction, e.g.
+    'Head north on Kanduyi-Kakamega Road' -> 'Kanduyi-Kakamega Road',
+    'Turn left onto A104 toward Malaba' -> 'A104'. Returns None when the
+    instruction doesn't name a road (e.g. 'Turn left') or only names a
+    generic non-road fragment (e.g. 'onto the roundabout')."""
+    if not instruction:
+        return None
+    match = _ROAD_NAME_FROM_INSTRUCTION.search(instruction)
+    if not match:
+        return None
+    name = match.group(1).strip().rstrip(".")
+    if not name or name.lower() in GENERIC_ROAD_NAMES:
+        return None
+    return name
+
+
+def _major_road_from_steps(step_pairs):
+    """step_pairs: [(instruction_text, distance_m), ...] for ONE driving
+    route, in order from the property. Returns (road_name, distance_from_
+    property_m) for whichever named road the route spends the MOST
+    cumulative distance on -- i.e. the de facto major/arterial road
+    connecting this specific property to the nearest town, whatever town
+    or road that happens to be. This replaces matching against a fixed,
+    inevitably-incomplete list of named Kenyan roads (see the old
+    MAJOR_ROADS_KENYA) with something that's correct everywhere by
+    construction. Returns (None, None) if no step names a real road."""
+    totals = {}
+    first_seen_offset = {}
+    running_offset = 0
+    for instruction, distance_m in step_pairs:
+        distance_m = distance_m or 0
+        name = _extract_road_name(instruction)
+        if name:
+            totals[name] = totals.get(name, 0) + distance_m
+            first_seen_offset.setdefault(name, running_offset)
+        running_offset += distance_m
+
+    if not totals:
+        return None, None
+
+    best_name = max(totals, key=totals.get)
+    return best_name, first_seen_offset[best_name]
+
+
 def fetch_nearest_towns(cell: LocationCell):
     """
     Finds up to MAX_NEAREST_TOWNS nearest towns via haversine (free, pure
@@ -572,7 +621,7 @@ def fetch_nearest_towns(cell: LocationCell):
         headers = {
             "Content-Type": "application/json",
             "X-Goog-Api-Key": GOOGLE_API_KEY,
-            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.legs.steps.navigationInstruction.instructions",
+            "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.legs.steps.navigationInstruction.instructions,routes.legs.steps.distanceMeters",
         }
         try:
             resp = requests.post(
@@ -598,13 +647,22 @@ def fetch_nearest_towns(cell: LocationCell):
             # it keeps the stored JSON small.
             if town["rank"] == 1:
                 steps = []
+                step_pairs = []
                 for leg in route.get("legs", []):
                     for step in leg.get("steps", []):
                         instruction = step.get("navigationInstruction", {}).get("instructions")
                         if instruction:
                             steps.append(instruction)
+                            step_pairs.append((instruction, step.get("distanceMeters")))
                 if steps:
                     entry["directions_steps"] = steps
+                # The road this route spends the most distance on, on the
+                # way to whichever town is actually nearest THIS property --
+                # see fetch_major_road_context below, which now reads this
+                # instead of matching against a hardcoded road list.
+                major_name, major_distance_m = _major_road_from_steps(step_pairs)
+                entry["major_road_name"] = major_name
+                entry["major_road_distance_m"] = major_distance_m
 
         results.append(entry)
 
@@ -716,7 +774,9 @@ def fetch_road_context(cell: LocationCell):
     return cell
 
 
-GENERIC_ROAD_NAMES = {"unnamed road"}
+GENERIC_ROAD_NAMES = {
+    "unnamed road", "the roundabout", "the ramp", "the highway ramp", "the exit",
+}
 
 
 def _resolve_road_name(place_id, cell):
@@ -851,48 +911,21 @@ def fetch_text_search_amenities(cell: LocationCell):
 
 
 # ---------------------------------------------------------------------------
-# Major roads -- distance to a known HIGHWAY/ARTERIAL, as opposed to
-# fetch_road_context's nearest-ANY-road (which happily returns a private
-# estate lane 12m away). No polyline data available, so this reuses Places
-# Text Search: query each known major road name with a location bias
-# around the cell, take whichever candidate comes back closest. This is
-# approximate -- Text Search returns a representative indexed point along
-# the road, not a true perpendicular snap -- good enough for "you're ~2km
-# from Thika Road", not survey-grade. Kenya-wide list, so cost is ~20
-# places_text calls the FIRST time a given cell is enriched (cached after).
+# Major roads -- distance to the real arterial/highway a property actually
+# connects to. Derived from the driving route already computed in
+# fetch_nearest_towns (see _major_road_from_steps above) rather than
+# matching against a fixed, inevitably-incomplete list of named Kenyan
+# roads. Works for any location, and makes zero extra API calls of its own
+# -- it just reads what fetch_nearest_towns (which MUST run first -- see
+# enrich_location_cell's step order) already stored on the rank-1 town.
 # ---------------------------------------------------------------------------
 
-MAJOR_ROADS_KENYA = [
-    "Thika Road", "Mombasa Road", "Waiyaki Way", "Uhuru Highway",
-    "Ngong Road", "Lang'ata Road", "Jogoo Road", "Outer Ring Road",
-    "Eastern Bypass", "Southern Bypass", "Northern Bypass",
-    "Kiambu Road", "Limuru Road", "Nairobi-Nakuru Highway",
-    "Nakuru-Eldoret Highway", "Mombasa-Malindi Road",
-    "Nairobi-Mombasa Highway", "Nyeri-Nairobi Highway",
-    "Kisumu-Kakamega Road", "Eldoret-Kitale Road", "Nakuru-Naivasha Road",
-]
-
-MAJOR_ROAD_SEARCH_RADIUS_M = 15000.0
-
-
 def fetch_major_road_context(cell: LocationCell):
-    best_name = None
-    best_distance = None
+    towns = cell.nearest_towns or []
+    nearest = next((t for t in towns if t.get("rank") == 1), None)
 
-    for road_name in MAJOR_ROADS_KENYA:
-        query = f"{road_name} near {cell.center_latitude},{cell.center_longitude}"
-        try:
-            results = _search_text(cell, query, radius_m=MAJOR_ROAD_SEARCH_RADIUS_M)
-        except EnrichmentStepFailed:
-            continue
-        if not results:
-            continue
-        closest = results[0]
-        if closest["distance_m"] is None:
-            continue
-        if best_distance is None or closest["distance_m"] < best_distance:
-            best_distance = closest["distance_m"]
-            best_name = road_name
+    best_name = nearest.get("major_road_name") if nearest else None
+    best_distance = nearest.get("major_road_distance_m") if nearest else None
 
     cell.nearest_major_road_name = best_name
     cell.nearest_major_road_distance_m = best_distance
