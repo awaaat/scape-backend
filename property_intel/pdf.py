@@ -25,6 +25,7 @@ import os
 import random
 import re
 from datetime import datetime
+from itertools import product
 
 import qrcode
 import requests
@@ -665,59 +666,138 @@ def _nearby_estate(cell):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Listing description -- phrasing variation pools
-#
-# The paragraph is assembled from three independent slots: opening,
-# services, closing. Each slot has its own pool of phrasings and one is
-# chosen at random per render, so two reports don't read identically just
-# because two pins happen to share similar data. Pools are picked based on
-# which data is actually available for this pin (e.g. a pin with no
-# resolved frontage road uses _OPENERS_TOWN_ONLY, never a template that
-# mentions frontage) -- this preserves the original function's behaviour
-# of silently dropping a clause rather than padding it with a placeholder.
-#
-# All templates below are plain str.format() strings. Every place-name or
-# address value is escaped once, up front, before being substituted in --
-# see _format_service_list / _build_description_html -- so the assembled
-# paragraph is safe to mark as Markup as a whole.
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# MEGA VARIATION POOLS – generated dynamically for enormous variety
+# ===========================================================================
 
-_OPENERS_TOWN_AND_FRONTAGE = [
-    "Located just {dist_m} metres, approximately {drive_phrase}, from {town} Centre and fronting {frontage}, this property offers excellent accessibility for residential or commercial development.",
-    "Situated {dist_m} metres from {town} Centre, approximately {drive_phrase}, and fronting {frontage}, this property offers outstanding accessibility for residential or commercial development.",
-    "Positioned {dist_m} metres from {town} Centre, approximately {drive_phrase}, and enjoying frontage on {frontage}, this property presents an accessible opportunity for residential or commercial development.",
-    "Fronting {frontage} and located {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property combines convenience with strong development potential.",
-    "Only {dist_m} metres from {town} Centre, approximately {drive_phrase}, and fronting {frontage}, this property enjoys a highly accessible location suitable for residential or commercial development.",
-    "Offering frontage on {frontage} and located just {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property is strategically positioned for residential or commercial development.",
-    "Located {dist_m} metres from {town} Centre, approximately {drive_phrase}, with frontage on {frontage}, this property offers a practical and well-connected setting for residential or commercial development.",
-    "Enjoying frontage on {frontage} and positioned just {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property delivers excellent accessibility for residential or commercial development.",
-    "This property is located {dist_m} metres from {town} Centre, approximately {drive_phrase}, and benefits from frontage on {frontage}, providing excellent accessibility for residential or commercial use.",
-    "Conveniently located {dist_m} metres from {town} Centre, approximately {drive_phrase}, and fronting {frontage}, this property is well positioned for residential or commercial development.",
-    "With frontage on {frontage} and set {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property combines road presence with strong accessibility for residential or commercial use.",
-    "Benefiting from frontage on {frontage}, and just {dist_m} metres, approximately {drive_phrase}, from {town} Centre, this property is well suited to residential or commercial development.",
+def _generate_openers():
+    """Builds a giant list of opening sentences from component phrases."""
+    # Base patterns – each with placeholders for {dist_m}, {drive_phrase}, {town}, {frontage}, {dist_away}
+    intro_verbs = [
+        "Located", "Situated", "Positioned", "Placed", "Set", "Found", "Sited",
+        "Nestled", "Lying", "Sitting", "Offering", "Benefiting from",
+    ]
+    distance_phrases = [
+        "just {dist_m} metres, approximately {drive_phrase}",
+        "{dist_m} metres, about {drive_phrase}",
+        "only {dist_m} metres, roughly {drive_phrase}",
+        "{dist_m} metres, some {drive_phrase}",
+        "a mere {dist_m} metres, approximately {drive_phrase}",
+        "{dist_m} metres, around {drive_phrase}",
+    ]
+    town_part = "from {town} Centre"
+    frontage_part = "fronting {frontage}"
+    frontage_part2 = "with frontage on {frontage}"
+    frontage_part3 = "enjoying frontage on {frontage}"
+    end_parts = [
+        "this property offers excellent accessibility for residential or commercial development.",
+        "this property offers outstanding accessibility for residential or commercial development.",
+        "this property presents an accessible opportunity for residential or commercial development.",
+        "this property combines convenience with strong development potential.",
+        "this property enjoys a highly accessible location suitable for residential or commercial development.",
+        "this property is strategically positioned for residential or commercial development.",
+        "this property offers a practical and well‑connected setting for residential or commercial development.",
+        "this property delivers excellent accessibility for residential or commercial development.",
+        "this property provides exceptional connectivity for residential or commercial use.",
+        "this property is ideally placed for residential or commercial development.",
+        "this property affords strong accessibility for a range of residential or commercial uses.",
+    ]
+
+    # Town+frontage combos
+    openers = []
+    for verb in intro_verbs:
+        for d_phrase in distance_phrases:
+            for end in end_parts:
+                # With town and frontage
+                openers.append(f"{verb} {d_phrase} from {town} and {frontage_part}, {end}")
+                openers.append(f"{verb} {d_phrase} from {town} and {frontage_part2}, {end}")
+                openers.append(f"{verb} {d_phrase} from {town} and {frontage_part3}, {end}")
+                openers.append(f"{verb} {d_phrase} from {town}, {frontage_part}, {end}")
+                # Frontage first
+                openers.append(f"{frontage_part.capitalize()} and {verb.lower()} {d_phrase} from {town}, {end}")
+                openers.append(f"{frontage_part2.capitalize()} and {verb.lower()} {d_phrase} from {town}, {end}")
+                # With full distance away phrasing
+                openers.append(f"{verb} {d_phrase.replace('{dist_m} metres', '{dist_away}')} from {town} and {frontage_part}, {end}")
+    # Town only
+    for verb in intro_verbs:
+        for d_phrase in distance_phrases:
+            for end in end_parts:
+                openers.append(f"{verb} {d_phrase} from {town}, {end}")
+                openers.append(f"{verb} {d_phrase} from {town} centre, {end}")
+                openers.append(f"{verb} {d_phrase} from the heart of {town}, {end}")
+                openers.append(f"{verb} {d_phrase.replace('{dist_m} metres', '{dist_away}')} from {town}, {end}")
+    # Frontage only
+    for verb in intro_verbs:
+        for end in end_parts:
+            openers.append(f"{verb} {frontage_part}, {end}")
+            openers.append(f"{verb} {frontage_part2}, {end}")
+            openers.append(f"{verb} {frontage_part3}, {end}")
+            openers.append(f"{frontage_part.capitalize()}, {verb.lower()} {end}")
+    # Fallback (no town, no frontage)
+    fallbacks = [
+        "{location_line} offers strong development potential for residential or commercial use.",
+        "{location_line} presents an accessible opportunity for residential or commercial development.",
+        "{location_line} is a prime candidate for residential or commercial development.",
+        "{location_line} enjoys a strategic location with strong development upside.",
+    ]
+    # Remove duplicates and return
+    # We'll keep as list; duplicates are okay but we can unique later
+    # Since we generate many, we'll just return a large list.
+    return openers + fallbacks
+
+# Generate the actual pools
+_OPENERS_ALL = _generate_openers()
+
+# Services templates – many variations
+_SERVICES_TEMPLATES = [
+    "Nearby amenities include {svc_list}, placing {nouns} within a short walk.",
+    "Within walking distance are {svc_list}, ensuring {nouns} are all close by.",
+    "Essential services within reach include {svc_list}, placing {nouns} within easy walking distance.",
+    "{svc_list_cap} are all close at hand, putting {nouns} within a short walk.",
+    "Nearby services include {svc_list}, putting {nouns} within comfortable walking distance.",
+    "Healthcare, education, banking, and other essential services are all close by, including {svc_list}.",
+    "The immediate surroundings include {svc_list}, bringing {nouns} within easy reach.",
+    "A range of services, including {svc_list}, are just a short walk away, ensuring {nouns} are conveniently close.",
+    "With {svc_list} nearby, {nouns} are always within easy reach.",
+    "The area boasts {svc_list}, making {nouns} exceptionally accessible.",
+    "Key amenities such as {svc_list} are situated close by, offering {nouns} at your doorstep.",
+    "Residents will appreciate the proximity of {svc_list}, providing {nouns} within a stone's throw.",
+    "Everyday needs are well catered for with {svc_list} just moments away, covering {nouns}.",
+    "The locale is well‑served by {svc_list}, ensuring {nouns} are never far.",
+    "From {svc_list}, you have all the essentials for {nouns} right on your doorstep.",
+    "With {svc_list} in the vicinity, {nouns} are effortlessly accessible.",
+    "The property benefits from nearby {svc_list}, placing {nouns} within a comfortable stroll.",
 ]
 
-_OPENERS_TOWN_ONLY = [
-    "Located just {dist_m} metres, approximately {drive_phrase}, from {town} Centre, this property offers excellent accessibility for residential or commercial development.",
-    "Situated {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property offers outstanding accessibility for residential or commercial development.",
-    "Positioned {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property presents an accessible opportunity for residential or commercial development.",
-    "Only {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property enjoys a highly accessible location suitable for residential or commercial development.",
-    "Conveniently located {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property is well positioned for residential or commercial development.",
-    "This property sits {dist_m} metres from {town} Centre, approximately {drive_phrase}, offering strong accessibility for residential or commercial use.",
+# Closing sentences – many variations
+_CLOSING_BOTH = [
+    "The surrounding area is well established for residential living, anchored by {estate}, and supported by {density}, making the property well suited for apartments, rental housing, or mixed-use development.",
+    "Anchored by {estate} and supported by {density}, the surrounding area offers strong potential for apartments, rental housing, or mixed-use development.",
+    "The neighbourhood is already well established, with {estate} nearby and {density} close at hand, reinforcing its suitability for apartments, rentals, or mixed-use projects.",
+    "The area is further strengthened by {estate}, together with {density}, supporting residential, rental, and mixed-use development.",
+    "The surrounding area is already residential, anchored by {estate} and a dense service base of {density} -- supporting apartments, rentals, or mixed-use development.",
+    "With {estate} and {density} in close proximity, the location is primed for residential, rental, and mixed‑use ventures.",
+    "The presence of {estate} and {density} makes this an ideal spot for apartments, rentals, or mixed‑use schemes.",
+    "Both {estate} and {density} reinforce the area's appeal for residential development, from apartments to mixed‑use.",
+    "The combination of {estate} and {density} provides a robust foundation for a variety of residential and commercial projects.",
+    "Thanks to {estate} and a dense service base of {density}, the property is exceptionally well‑suited to apartments, rentals, or mixed‑use.",
 ]
 
-_OPENERS_FRONTAGE_ONLY = [
-    "Fronting {frontage}, this property offers excellent accessibility for residential or commercial development.",
-    "Enjoying frontage on {frontage}, this property presents an accessible opportunity for residential or commercial development.",
-    "With direct frontage on {frontage}, this property is well positioned for residential or commercial development.",
-    "Benefiting from frontage on {frontage}, this property offers a practical, well-connected setting for residential or commercial development.",
-    "Offering frontage on {frontage}, this property is strategically positioned for residential or commercial development.",
+_CLOSING_ESTATE_ONLY = [
+    "The surrounding area is already residential, anchored by {estate} -- supporting apartments, rentals, or mixed-use development.",
+    "Anchored by {estate}, the surrounding neighbourhood is well suited to apartments, rental housing, or mixed-use development.",
+    "The area is already well established for residential living, with {estate} nearby.",
+    "With {estate} at hand, the location is ready for apartments, rentals, or mixed‑use projects.",
+    "{estate} provides a solid anchor for further residential and commercial development.",
+    "The established presence of {estate} underpins the area's potential for rental housing and mixed‑use.",
 ]
 
-_OPENERS_FALLBACK = [
-    "{location_line} offers strong development potential for residential or commercial use.",
-    "{location_line} presents an accessible opportunity for residential or commercial development.",
+_CLOSING_DENSITY_ONLY = [
+    "The property is further supported by {density}, reinforcing its suitability for apartments, rental housing, or mixed-use development.",
+    "With {density} nearby, the area offers a strong service base for apartments, rentals, or mixed-use development.",
+    "A dense service base of {density} further supports apartments, rental housing, or mixed-use development.",
+    "The area's service density of {density} makes it a prime candidate for residential and mixed‑use projects.",
+    "Backed by {density}, the property is well positioned for apartments, rentals, or mixed‑use.",
 ]
 
 # Rotated per service entry so a four-item list never repeats the same
@@ -729,37 +809,13 @@ _SERVICE_CONNECTORS = [
     "{d}, right by the property",
     "at {d}",
     "{d}, close to the site",
+    "{d}, a stone's throw away",
+    "{d}, practically on the doorstep",
+    "{d}, easily accessible",
+    "{d}, within a short stroll",
 ]
 
-_SERVICES_TEMPLATES = [
-    "Nearby amenities include {svc_list}, placing {nouns} within a short walk.",
-    "Within walking distance are {svc_list}, ensuring {nouns} are all close by.",
-    "Essential services within reach include {svc_list}, placing {nouns} within easy walking distance.",
-    "{svc_list_cap} are all close at hand, putting {nouns} within a short walk.",
-    "Nearby services include {svc_list}, putting {nouns} within comfortable walking distance.",
-    "Healthcare, education, banking, and other essential services are all close by, including {svc_list}.",
-    "The immediate surroundings include {svc_list}, bringing {nouns} within easy reach.",
-]
-
-_CLOSING_BOTH = [
-    "The surrounding area is well established for residential living, anchored by {estate}, and supported by {density}, making the property well suited for apartments, rental housing, or mixed-use development.",
-    "Anchored by {estate} and supported by {density}, the surrounding area offers strong potential for apartments, rental housing, or mixed-use development.",
-    "The neighbourhood is already well established, with {estate} nearby and {density} close at hand, reinforcing its suitability for apartments, rentals, or mixed-use projects.",
-    "The area is further strengthened by {estate}, together with {density}, supporting residential, rental, and mixed-use development.",
-    "The surrounding area is already residential, anchored by {estate} and a dense service base of {density} -- supporting apartments, rentals, or mixed-use development.",
-]
-
-_CLOSING_ESTATE_ONLY = [
-    "The surrounding area is already residential, anchored by {estate} -- supporting apartments, rentals, or mixed-use development.",
-    "Anchored by {estate}, the surrounding neighbourhood is well suited to apartments, rental housing, or mixed-use development.",
-    "The area is already well established for residential living, with {estate} nearby.",
-]
-
-_CLOSING_DENSITY_ONLY = [
-    "The property is further supported by {density}, reinforcing its suitability for apartments, rental housing, or mixed-use development.",
-    "With {density} nearby, the area offers a strong service base for apartments, rentals, or mixed-use development.",
-    "A dense service base of {density} further supports apartments, rental housing, or mixed-use development.",
-]
+# We'll keep these as lists; they are already huge.
 
 
 def _format_drive_phrase(minutes):
@@ -837,26 +893,34 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
     km = nearest_town[2] if nearest_town else None
     dist_m = int(round(km * 1000)) if km is not None else None
     drive_phrase = _format_drive_phrase(minutes)
+    dist_away = _format_distance_away(dist_m) if dist_m is not None else "unknown distance"
     frontage_short = frontage_name.split(",")[0] if frontage_name else None
 
-    has_town = town_label is not None and dist_m is not None and drive_phrase is not None
-    has_frontage = frontage_short is not None
-
-    # --- opening ---
-    if has_town and has_frontage:
-        opener = rng.choice(_OPENERS_TOWN_AND_FRONTAGE)
-    elif has_town:
-        opener = rng.choice(_OPENERS_TOWN_ONLY)
-    elif has_frontage:
-        opener = rng.choice(_OPENERS_FRONTAGE_ONLY)
+    # Pick opener from the giant pool, filtering based on available data
+    possible_openers = _OPENERS_ALL[:]  # copy
+    # If no town, remove those that require {town}
+    if town_label is None or dist_m is None or drive_phrase is None:
+        possible_openers = [t for t in possible_openers if "{town}" not in t and "{dist_m}" not in t and "{dist_away}" not in t]
     else:
-        opener = rng.choice(_OPENERS_FALLBACK)
+        # If no frontage, remove those that require {frontage}
+        if not frontage_short:
+            possible_openers = [t for t in possible_openers if "{frontage}" not in t]
+        else:
+            # keep all
+            pass
+    # Ensure we have at least something
+    if not possible_openers:
+        possible_openers = _OPENERS_ALL  # fallback
 
+    opener = rng.choice(possible_openers)
+
+    # Format the opener
     opening_sentence = opener.format(
-        dist_m=dist_m,
-        drive_phrase=drive_phrase,
+        dist_m=dist_m if dist_m is not None else "",
+        drive_phrase=drive_phrase if drive_phrase else "",
         town=str(escape(town_label)) if town_label else "",
         frontage=str(escape(frontage_short)) if frontage_short else "",
+        dist_away=dist_away,
         location_line=str(escape(location_line)) if location_line else "This property",
     )
     parts = [opening_sentence]
@@ -867,7 +931,7 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
         services_template = rng.choice(_SERVICES_TEMPLATES)
         parts.append(services_template.format(
             svc_list=svc_list,
-            svc_list_cap=svc_list[0].upper() + svc_list[1:],
+            svc_list_cap=svc_list[0].upper() + svc_list[1:] if svc_list else "",
             nouns=noun_phrase,
         ))
 
@@ -987,9 +1051,6 @@ def render_report_pdf(pin, cell):
             facts.append({"label": "County", "value": county})
 
         # ---- listing description ----
-        # Randomized phrasing (see _build_description_html); seeded on the
-        # pin id so the same pin regenerates with the same wording instead
-        # of drifting on every re-render.
         description_html = _build_description_html(
             town_label, nearest_town, frontage_name, frontage_dist,
             evidence_points, estate, density_counts,
@@ -1008,15 +1069,16 @@ def render_report_pdf(pin, cell):
         # highlight is spelled out in full ("37 meters away", "1.2
         # kilometers away"), never abbreviated to "37m"/"1.2km".
         highlights = []
-        if frontage_name:
+        if frontage_name and frontage_dist is not None and frontage_dist >= ROAD_DISTANCE_ALONG_THRESHOLD_M:
             short_name = frontage_name.split(",")[0]
-            if frontage_dist is not None and frontage_dist >= ROAD_DISTANCE_ALONG_THRESHOLD_M:
-                highlights.append({"text": f"Fronts {short_name}", "dist": _format_distance_away(frontage_dist)})
+            highlights.append({"text": f"Fronts {short_name}", "dist": _format_distance_away(frontage_dist)})
         for label, name, dist in evidence_points:
-            highlights.append({"text": name, "dist": _format_distance_away(dist)})
+            if dist is not None and dist > 0:
+                highlights.append({"text": name, "dist": _format_distance_away(dist)})
         if estate:
             name, dist = estate
-            highlights.append({"text": f"Established neighbourhood: {name}", "dist": _format_distance_away(dist)})
+            if dist is not None and dist > 0:
+                highlights.append({"text": f"Established neighbourhood: {name}", "dist": _format_distance_away(dist)})
 
         # ---- suitability ----
         suitability = [
