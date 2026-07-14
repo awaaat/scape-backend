@@ -138,34 +138,61 @@ def _label_from_field_name(field_name):
     return field_name.replace("nearby_", "", 1).replace("_", " ").title()
 
 
-def _discover_amenity_fields(cell):
-    """Every model field starting with 'nearby_' that's a non-empty list --
-    generic, so any future amenity category shows up with zero changes.
+MAJOR_AMENITY_CATEGORIES = {
+    "nearby_schools",
+    "nearby_universities",
+    "nearby_hospitals",
+    "nearby_banks",
+    "nearby_petrol_stations",
+    "nearby_supermarkets",
+    "nearby_gated_communities",
+    "nearby_police_stations",
+    "nearby_fire_stations",
+    "nearby_ev_charging",
+}
 
-    Two defensive filters run here, at the single choke point every report
-    section reads through:
-      - distance_m is None: suppressed by the OSM verification cascade in
-        amenity_verification.py, or by the coincident-distance cleanup --
-        either way, an unreliable/unrecoverable distance.
-      - business_status == CLOSED_PERMANENTLY: Google has confirmed this
-        place no longer exists. Filtered at ingest time too (see
-        google_client.py's _search_nearby/_search_text), but ALSO checked
-        here so any LocationCell cached before that filter existed
-        self-heals immediately, rather than showing stale closed places
-        for up to LOCATION_CELL_STALE_AFTER_DAYS until its next re-fetch.
-    """
+_NOTABLE_RESTAURANT_KEYWORDS = ("hotel", "resort", "lodge", " inn", "inn ")
+
+
+def _is_notable_restaurant(name):
+    n = (name or "").lower()
+    return any(kw in n for kw in _NOTABLE_RESTAURANT_KEYWORDS)
+
+
+def _normalize_amenity_name(name):
+    if not name:
+        return ""
+    n = name.lower()
+    n = re.sub(r"[^a-z0-9\s]", " ", n)
+    return re.sub(r"\s+", " ", n).strip()
+
+
+def _discover_amenity_fields(cell, major_only=False):
+    """'nearby_roads' is always excluded -- it has its own report section.
+    major_only=True restricts to MAJOR_AMENITY_CATEGORIES (plus notable
+    hotels/resorts within nearby_restaurants)."""
     found = []
     for field in cell._meta.get_fields():
         name = getattr(field, "name", "")
-        if name.startswith("nearby_"):
-            value = getattr(cell, name, None) or []
-            filtered = [
-                e for e in value
-                if e.get("distance_m") is not None
-                and e.get("business_status") != "CLOSED_PERMANENTLY"
-            ]
-            if filtered:
-                found.append((_label_from_field_name(name), filtered))
+        if not name.startswith("nearby_") or name == "nearby_roads":
+            continue
+        if major_only and name not in MAJOR_AMENITY_CATEGORIES and name != "nearby_restaurants":
+            continue
+        value = getattr(cell, name, None) or []
+        filtered = []
+        for e in value:
+            if e.get("distance_m") is None:
+                continue
+            if e.get("business_status") == "CLOSED_PERMANENTLY":
+                continue
+            entry_name = (e.get("name") or "").strip()
+            if not entry_name or entry_name.lower() == "null":
+                continue
+            if major_only and name == "nearby_restaurants" and not _is_notable_restaurant(entry_name):
+                continue
+            filtered.append(e)
+        if filtered:
+            found.append((_label_from_field_name(name), filtered))
     return found
 
 
@@ -447,13 +474,20 @@ def _fetch_image_flowable(url, width_mm=160, height_mm=90):
         return None
 
 
+STUDENT_HOUSING_PROXIMITY_M = 5000  # matches the "within 5km" density bucket shown alongside it
+
+
 def _development_suitability_table(cell):
     """Generate development suitability recommendations based on location data"""
     amenity_fields = _discover_amenity_fields(cell)
-    has_university = any(label == "Universities" for label, _ in amenity_fields)
-    has_retail = any(label == "Shopping Centres" for label, _ in amenity_fields)
-    has_student_housing = any(label == "Student Housing" for label, _ in amenity_fields)
-    has_gated = any(label == "Gated Communities" for label, _ in amenity_fields)
+    amenity_lookup = dict(amenity_fields)
+    has_university = "Universities" in amenity_lookup
+    has_retail = "Shopping" in amenity_lookup or "Supermarkets" in amenity_lookup
+    has_gated = "Gated Communities" in amenity_lookup
+    has_student_housing = any(
+        e.get("distance_m") is not None and e["distance_m"] <= STUDENT_HOUSING_PROXIMITY_M
+        for e in amenity_lookup.get("Student Housing", [])
+    )
     
     # Get commute time
     nairobi = (cell.travel_times or {}).get("nairobi_cbd")
@@ -642,18 +676,23 @@ def _stars_drawing(filled, total=5, box=11, gap=3):
 
 
 def _ai_investment_opinion(pin, cell, investment_score, suitability_data):
-    """Deterministic, data-grounded narrative paragraph -- reads like an
-    analyst's opinion but every claim traces back to a fetched data point,
-    so it never invents anything."""
     location_name = _display_location_name(pin, cell)
     best = [s for s in suitability_data if s[1] in ("Very High", "High")]
     weak = [s for s in suitability_data if s[1] == "Low"]
 
+    location_phrase = re.sub(r"^near\s+", "", location_name, flags=re.IGNORECASE)
+
     if best:
         best_types = ", ".join(s[0].lower() for s in best)
-        opinion = f"{location_name} is best suited for {best_types}, based on the amenity mix and infrastructure signals captured in this report."
+        opinion = (
+            f"This property, located near {location_phrase} is best suited for {best_types}, "
+            "based on the amenity mix and infrastructure signals captured in this report."
+        )
     else:
-        opinion = f"{location_name} shows moderate suitability across development types, with no single category standing out strongly."
+        opinion = (
+            f"This property, located near {location_phrase}, shows moderate suitability across "
+            "development types, with no single category standing out strongly."
+        )
 
     town, benchmark = _match_price_benchmark(cell)
     if benchmark and benchmark.get("note"):
@@ -1059,14 +1098,11 @@ def render_report_pdf(pin, cell):
                 story.append(photo_table)
             story.append(Spacer(1, 6 * mm))
 
-        # Specific Named Amenities - FULL DETAILS with formatted distances
-        amenity_fields = _discover_amenity_fields(cell)
+        amenity_fields = _discover_amenity_fields(cell, major_only=True)
         if amenity_fields:
             story.append(Paragraph("NEARBY AMENITIES", styles['CustomHeading2']))
             story.append(Spacer(1, 2 * mm))
-            
-            # Flatten every category into one list, then sort the WHOLE
-            # table by distance -- nearest to farthest, regardless of category.
+
             flat_entries = []
             for label, entries in amenity_fields:
                 for entry in entries:
@@ -1074,6 +1110,17 @@ def render_report_pdf(pin, cell):
             flat_entries.sort(
                 key=lambda pair: pair[1].get('distance_m') if pair[1].get('distance_m') is not None else float('inf')
             )
+
+            seen_names = set()
+            deduped_entries = []
+            for label, entry in flat_entries:
+                key = _normalize_amenity_name(entry.get('name'))
+                if key and key in seen_names:
+                    continue
+                if key:
+                    seen_names.add(key)
+                deduped_entries.append((label, entry))
+            flat_entries = deduped_entries
 
             amenity_data = [["Type", "Name", "Distance"]]
             for label, entry in flat_entries[:30]:  # cap at 30 rows total for a readable page
