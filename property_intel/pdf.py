@@ -22,6 +22,7 @@ import io
 import logging
 import math
 import os
+import random
 import re
 from datetime import datetime
 
@@ -348,12 +349,28 @@ def _score_investment(cell, accessibility_score):
 
 
 def _format_distance(meters):
+    """Compact form ('37m', '1.2km') -- kept for callers/tests that still
+    want the terse version (e.g. anywhere space is tight)."""
     if meters is None:
         return "Unknown"
     if meters <= 500:
         return f"{int(round(meters))}m"
     km = meters / 1000
     return f"{int(round(meters))}m ({km:.1f}km)"
+
+
+def _format_distance_away(meters):
+    """Full 'read-out-loud' phrasing -- '37 meters away' / '1.2 kilometers
+    away' -- used everywhere a distance is shown to a broker or buyer, so
+    every number on the report is unambiguous on its own, without relying
+    on a nearby label to explain what a bare '37m' means. Never abbreviates
+    and never omits the trailing 'away'."""
+    if meters is None:
+        return "distance unknown"
+    if meters < 1000:
+        return f"{int(round(meters))} meters away"
+    km = meters / 1000
+    return f"{km:.1f} kilometers away"
 
 
 def _density_table_data(cell):
@@ -408,7 +425,7 @@ def _get_named_amenities_text(cell, category, label, max_names=3, include_distan
             if not top:
                 return None
             names = [e['name'] for e in top]
-            closest = _format_distance(top[0].get('distance_m'))
+            closest = _format_distance_away(top[0].get('distance_m'))
             if len(names) == 1:
                 text = names[0]
             else:
@@ -417,7 +434,7 @@ def _get_named_amenities_text(cell, category, label, max_names=3, include_distan
                 return text
             remaining = len(sorted_entries) - len(top)
             remaining_label = _count_label(remaining) if len(sorted_entries) >= AMENITY_FETCH_CAP else str(remaining)
-            suffix = f" (the nearest just {closest} away"
+            suffix = f" (the nearest just {closest}"
             suffix += f", plus {remaining_label} more nearby)" if remaining > 0 else ")"
             return text + suffix
     return None
@@ -449,9 +466,28 @@ def _image_data_uri(url, mime="image/jpeg"):
 STUDENT_HOUSING_PROXIMITY_M = 5000  # matches the "within 5km" density bucket shown alongside it
 
 
+def _nearest_dist(amenity_lookup, *labels):
+    """Nearest distance_m across one or more amenity-lookup labels, or
+    None if none of those labels have any entries for this pin. Used so
+    suitability rationale can cite a real distance instead of a vague
+    'near educational institutions' style phrase."""
+    best = None
+    for label in labels:
+        for e in amenity_lookup.get(label) or []:
+            d = e.get("distance_m")
+            if d is None:
+                continue
+            if best is None or d < best:
+                best = d
+    return best
+
+
 def _development_suitability_table(cell):
-    """Unchanged scoring logic from the original report -- the template
-    just displays fewer rows now. Returns [(dev_type, level, rationale), ...]."""
+    """Same scoring logic as the original report -- the template just
+    displays fewer rows now. Every rationale string cites the actual
+    nearest-amenity distance (e.g. 'Nearest university is 850 meters
+    away') instead of a vague 'Near educational institutions'.
+    Returns [(dev_type, level, rationale), ...]."""
     amenity_fields = _discover_amenity_fields(cell)
     amenity_lookup = dict(amenity_fields)
     has_university = "Universities" in amenity_lookup
@@ -462,33 +498,39 @@ def _development_suitability_table(cell):
         for e in amenity_lookup.get("Student Housing", [])
     )
 
+    uni_dist = _nearest_dist(amenity_lookup, "Universities")
+    retail_dist = _nearest_dist(amenity_lookup, "Shopping", "Supermarkets")
+    gated_dist = _nearest_dist(amenity_lookup, "Gated Communities")
+
     nairobi = (cell.travel_times or {}).get("nairobi_cbd")
     commute_mins = round(nairobi["duration_s"] / 60) if nairobi and nairobi.get("duration_s") else None
 
     suitability = []
 
     if has_student_housing and has_university:
-        suitability.append(("Student Housing", "Very High", "Existing student accommodation confirms active rental market"))
+        suitability.append(("Student Housing", "Very High", f"Existing student accommodation confirms active rental market, with the nearest university {_format_distance_away(uni_dist)}"))
     elif has_university and commute_mins and commute_mins < 45:
-        suitability.append(("Student Housing", "High", "Proximity to educational institutions drives rental demand"))
+        suitability.append(("Student Housing", "High", f"Nearest university is {_format_distance_away(uni_dist)}, close enough to drive rental demand"))
     elif has_university:
-        suitability.append(("Student Housing", "Medium", "Near educational institutions"))
+        suitability.append(("Student Housing", "Medium", f"Nearest university is {_format_distance_away(uni_dist)}"))
     else:
         suitability.append(("Student Housing", "Low", "Limited educational institutions in immediate area"))
 
     if has_retail and has_university and has_gated:
-        suitability.append(("Apartments", "Very High", "Service ecosystem plus proven demand from nearby gated communities"))
+        suitability.append(("Apartments", "Very High", f"Nearest retail is {_format_distance_away(retail_dist)} and nearest gated community is {_format_distance_away(gated_dist)}, showing proven demand nearby"))
     elif has_retail and has_university:
-        suitability.append(("Apartments", "High", "Complete service ecosystem supports residential development"))
+        suitability.append(("Apartments", "High", f"Complete service ecosystem supports residential development, with the nearest retail {_format_distance_away(retail_dist)}"))
     elif has_retail or has_university:
-        suitability.append(("Apartments", "Medium", "Some support infrastructure present"))
+        nearest_label = "retail" if has_retail else "university"
+        nearest_val = retail_dist if has_retail else uni_dist
+        suitability.append(("Apartments", "Medium", f"Nearest {nearest_label} is {_format_distance_away(nearest_val)}"))
     else:
         suitability.append(("Apartments", "Low", "Limited service infrastructure"))
 
     if has_retail and commute_mins and commute_mins < 60:
-        suitability.append(("Mixed-Use", "Medium-High", "Retail presence with reasonable commute supports mixed-use"))
+        suitability.append(("Mixed-Use", "Medium-High", f"Nearest retail is {_format_distance_away(retail_dist)}, with a reasonable commute supporting mixed-use"))
     elif has_retail:
-        suitability.append(("Mixed-Use", "Medium", "Retail presence supports mixed-use potential"))
+        suitability.append(("Mixed-Use", "Medium", f"Nearest retail is {_format_distance_away(retail_dist)}"))
     else:
         suitability.append(("Mixed-Use", "Low", "Limited commercial ecosystem"))
 
@@ -534,10 +576,10 @@ def _residential_home_row(cell):
         return ("Residential Home", "Medium", "No established estate confirmed nearby yet")
     name, dist = estate
     if dist <= 500:
-        return ("Residential Home", "Very High", f"Established estate {name} {int(dist)}m away")
+        return ("Residential Home", "Very High", f"Established estate {name} is {_format_distance_away(dist)}")
     if dist <= 2000:
-        return ("Residential Home", "High", f"Established estate {name} within {_format_distance(dist)}")
-    return ("Residential Home", "Medium", f"Nearest estate, {name}, is {_format_distance(dist)} away")
+        return ("Residential Home", "High", f"Established estate {name} is {_format_distance_away(dist)}")
+    return ("Residential Home", "Medium", f"Nearest estate, {name}, is {_format_distance_away(dist)}")
 
 
 # ---------------------------------------------------------------------------
@@ -623,91 +665,229 @@ def _nearby_estate(cell):
     return None
 
 
-def _evid(text):
-    """Wraps a piece of text in the template's <span class="evid"> evidence
-    chip. Escapes the inner text (place names, addresses) since it's
-    outside our control, then marks the whole chip safe to insert into
-    the Jinja template raw."""
-    return Markup('<span class="evid">{}</span>').format(text)
+# ---------------------------------------------------------------------------
+# Listing description -- phrasing variation pools
+#
+# The paragraph is assembled from three independent slots: opening,
+# services, closing. Each slot has its own pool of phrasings and one is
+# chosen at random per render, so two reports don't read identically just
+# because two pins happen to share similar data. Pools are picked based on
+# which data is actually available for this pin (e.g. a pin with no
+# resolved frontage road uses _OPENERS_TOWN_ONLY, never a template that
+# mentions frontage) -- this preserves the original function's behaviour
+# of silently dropping a clause rather than padding it with a placeholder.
+#
+# All templates below are plain str.format() strings. Every place-name or
+# address value is escaped once, up front, before being substituted in --
+# see _format_service_list / _build_description_html -- so the assembled
+# paragraph is safe to mark as Markup as a whole.
+# ---------------------------------------------------------------------------
+
+_OPENERS_TOWN_AND_FRONTAGE = [
+    "Located just {dist_m} metres, approximately {drive_phrase}, from {town} Centre and fronting {frontage}, this property offers excellent accessibility for residential or commercial development.",
+    "Situated {dist_m} metres from {town} Centre, approximately {drive_phrase}, and fronting {frontage}, this property offers outstanding accessibility for residential or commercial development.",
+    "Positioned {dist_m} metres from {town} Centre, approximately {drive_phrase}, and enjoying frontage on {frontage}, this property presents an accessible opportunity for residential or commercial development.",
+    "Fronting {frontage} and located {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property combines convenience with strong development potential.",
+    "Only {dist_m} metres from {town} Centre, approximately {drive_phrase}, and fronting {frontage}, this property enjoys a highly accessible location suitable for residential or commercial development.",
+    "Offering frontage on {frontage} and located just {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property is strategically positioned for residential or commercial development.",
+    "Located {dist_m} metres from {town} Centre, approximately {drive_phrase}, with frontage on {frontage}, this property offers a practical and well-connected setting for residential or commercial development.",
+    "Enjoying frontage on {frontage} and positioned just {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property delivers excellent accessibility for residential or commercial development.",
+    "This property is located {dist_m} metres from {town} Centre, approximately {drive_phrase}, and benefits from frontage on {frontage}, providing excellent accessibility for residential or commercial use.",
+    "Conveniently located {dist_m} metres from {town} Centre, approximately {drive_phrase}, and fronting {frontage}, this property is well positioned for residential or commercial development.",
+    "With frontage on {frontage} and set {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property combines road presence with strong accessibility for residential or commercial use.",
+    "Benefiting from frontage on {frontage}, and just {dist_m} metres, approximately {drive_phrase}, from {town} Centre, this property is well suited to residential or commercial development.",
+]
+
+_OPENERS_TOWN_ONLY = [
+    "Located just {dist_m} metres, approximately {drive_phrase}, from {town} Centre, this property offers excellent accessibility for residential or commercial development.",
+    "Situated {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property offers outstanding accessibility for residential or commercial development.",
+    "Positioned {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property presents an accessible opportunity for residential or commercial development.",
+    "Only {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property enjoys a highly accessible location suitable for residential or commercial development.",
+    "Conveniently located {dist_m} metres from {town} Centre, approximately {drive_phrase}, this property is well positioned for residential or commercial development.",
+    "This property sits {dist_m} metres from {town} Centre, approximately {drive_phrase}, offering strong accessibility for residential or commercial use.",
+]
+
+_OPENERS_FRONTAGE_ONLY = [
+    "Fronting {frontage}, this property offers excellent accessibility for residential or commercial development.",
+    "Enjoying frontage on {frontage}, this property presents an accessible opportunity for residential or commercial development.",
+    "With direct frontage on {frontage}, this property is well positioned for residential or commercial development.",
+    "Benefiting from frontage on {frontage}, this property offers a practical, well-connected setting for residential or commercial development.",
+    "Offering frontage on {frontage}, this property is strategically positioned for residential or commercial development.",
+]
+
+_OPENERS_FALLBACK = [
+    "{location_line} offers strong development potential for residential or commercial use.",
+    "{location_line} presents an accessible opportunity for residential or commercial development.",
+]
+
+# Rotated per service entry so a four-item list never repeats the same
+# connector phrasing four times in a row.
+_SERVICE_CONNECTORS = [
+    "just {d}",
+    "{d}",
+    "only {d}",
+    "{d}, right by the property",
+    "at {d}",
+    "{d}, close to the site",
+]
+
+_SERVICES_TEMPLATES = [
+    "Nearby amenities include {svc_list}, placing {nouns} within a short walk.",
+    "Within walking distance are {svc_list}, ensuring {nouns} are all close by.",
+    "Essential services within reach include {svc_list}, placing {nouns} within easy walking distance.",
+    "{svc_list_cap} are all close at hand, putting {nouns} within a short walk.",
+    "Nearby services include {svc_list}, putting {nouns} within comfortable walking distance.",
+    "Healthcare, education, banking, and other essential services are all close by, including {svc_list}.",
+    "The immediate surroundings include {svc_list}, bringing {nouns} within easy reach.",
+]
+
+_CLOSING_BOTH = [
+    "The surrounding area is well established for residential living, anchored by {estate}, and supported by {density}, making the property well suited for apartments, rental housing, or mixed-use development.",
+    "Anchored by {estate} and supported by {density}, the surrounding area offers strong potential for apartments, rental housing, or mixed-use development.",
+    "The neighbourhood is already well established, with {estate} nearby and {density} close at hand, reinforcing its suitability for apartments, rentals, or mixed-use projects.",
+    "The area is further strengthened by {estate}, together with {density}, supporting residential, rental, and mixed-use development.",
+    "The surrounding area is already residential, anchored by {estate} and a dense service base of {density} -- supporting apartments, rentals, or mixed-use development.",
+]
+
+_CLOSING_ESTATE_ONLY = [
+    "The surrounding area is already residential, anchored by {estate} -- supporting apartments, rentals, or mixed-use development.",
+    "Anchored by {estate}, the surrounding neighbourhood is well suited to apartments, rental housing, or mixed-use development.",
+    "The area is already well established for residential living, with {estate} nearby.",
+]
+
+_CLOSING_DENSITY_ONLY = [
+    "The property is further supported by {density}, reinforcing its suitability for apartments, rental housing, or mixed-use development.",
+    "With {density} nearby, the area offers a strong service base for apartments, rentals, or mixed-use development.",
+    "A dense service base of {density} further supports apartments, rental housing, or mixed-use development.",
+]
+
+
+def _format_drive_phrase(minutes):
+    if minutes is None:
+        return None
+    if minutes <= 1:
+        return "a 1-minute drive"
+    return f"a {minutes}-minute drive"
+
+
+def _format_service_list(evidence_points, rng):
+    """Builds the varied 'X 37 meters away, Y 42 meters away ...' clause,
+    rotating connector phrasing per entry so a four-item list doesn't
+    repeat itself, and returns the benefit-noun phrase ('healthcare,
+    education and banking') built from the same entries. Every distance
+    is the full 'X meters away' / 'X.Y kilometers away' form -- never
+    abbreviated. Returns (None, None) if there are no evidence points."""
+    if not evidence_points:
+        return None, None
+    top4 = evidence_points[:4]
+    pieces = []
+    for _label, name, dist_m in top4:
+        connector = rng.choice(_SERVICE_CONNECTORS)
+        d_text = _format_distance_away(dist_m)
+        pieces.append(f"{escape(name)} {connector.format(d=d_text)}")
+    if len(pieces) == 1:
+        svc_list = pieces[0]
+    else:
+        svc_list = ", ".join(pieces[:-1]) + ", and " + pieces[-1]
+
+    nouns = []
+    for label, _name, _dist in top4:
+        noun = _CATEGORY_BENEFIT_NOUN.get(label)
+        if noun and noun not in nouns:
+            nouns.append(noun)
+    if len(nouns) >= 2:
+        noun_phrase = ", ".join(nouns[:-1]) + " and " + nouns[-1]
+    elif nouns:
+        noun_phrase = nouns[0]
+    else:
+        noun_phrase = "everyday needs"
+    return svc_list, noun_phrase
+
+
+def _format_density_phrase(density_counts):
+    if not density_counts:
+        return None
+    chips = [
+        f"{_count_label(c)} {label.lower() if c != 1 else _singular(label)}"
+        for label, c in density_counts
+    ]
+    if len(chips) == 1:
+        return f"{chips[0]} within 5km"
+    return " and ".join(chips) + " within 5km"
 
 
 def _build_description_html(town_label, nearest_town, frontage_name, frontage_dist,
-                             evidence_points, estate, density_counts):
-    """Builds the Listing Description paragraph with the same inline
-    evidence-chip markup as the template's example copy, entirely from
-    real data. Any clause whose underlying evidence is missing for this
-    pin is dropped -- never padded with a placeholder."""
-    parts = []
+                             evidence_points, estate, density_counts,
+                             location_line=None, seed=None):
+    """Builds the Listing Description paragraph from real evidence data.
+    Each of the paragraph's three slots (opening / services / closing) is
+    filled from a pool of phrasings chosen at random, so reports for
+    different pins -- or the same pin re-rendered without a seed -- don't
+    all read identically. Any slot whose underlying evidence is missing is
+    dropped entirely, never padded with a placeholder, matching the
+    previous single-template version's degrade-gracefully behaviour.
 
-    # --- opening: town distance + frontage ---
-    open_bits = []
-    if town_label and nearest_town:
-        _, minutes, km = nearest_town
-        if km is not None and minutes is not None:
-            town_chip = _evid(f"{int(round(km * 1000))}m \u00b7 {minutes} min")
-        elif minutes is not None:
-            town_chip = _evid(f"{minutes} min")
-        elif km is not None:
-            town_chip = _evid(f"{km}km")
-        else:
-            town_chip = None
-        if town_chip is not None:
-            open_bits.append(Markup("Located {} from {} Town Centre").format(town_chip, town_label))
-        else:
-            open_bits.append(Markup("Located near {} Town Centre").format(town_label))
-    if frontage_name:
-        short_name = frontage_name.split(",")[0]
-        if frontage_dist is not None and frontage_dist >= ROAD_DISTANCE_ALONG_THRESHOLD_M:
-            front_chip = _evid(f"{short_name}, {int(round(frontage_dist))}m")
-            open_bits.append(Markup("fronting {}").format(front_chip))
-        else:
-            open_bits.append(Markup("fronting {}").format(escape(short_name)))
-    if open_bits:
-        joined = Markup(" and ").join(open_bits) if len(open_bits) > 1 else open_bits[0]
-        parts.append(Markup("{}, this property offers strong accessibility for residential or commercial use.").format(joined))
+    `seed` makes the choice deterministic (e.g. pass the pin id so the
+    same pin always regenerates with the same wording); pass None for a
+    fresh random choice on every call.
+    """
+    rng = random.Random(seed) if seed is not None else random
 
-    # --- nearby services (up to 4 evidence points) ---
-    if evidence_points:
-        top4 = evidence_points[:4]
-        chips = [_evid(f"{name} \u00b7 {_format_distance(dist)}") for _, name, dist in top4]
-        if len(chips) == 1:
-            chip_list = chips[0]
-        else:
-            chip_list = Markup(", ").join(chips[:-1])
-            chip_list = Markup("{} and {}").format(chip_list, chips[-1])
-        nouns = []
-        for label, _name, _dist in top4:
-            noun = _CATEGORY_BENEFIT_NOUN.get(label)
-            if noun and noun not in nouns:
-                nouns.append(noun)
-        if len(nouns) >= 2:
-            noun_phrase = ", ".join(nouns[:-1]) + " and " + nouns[-1]
-        elif nouns:
-            noun_phrase = nouns[0]
-        else:
-            noun_phrase = "everyday needs"
-        parts.append(Markup("Nearby services include {}, putting {} within a short walk.").format(chip_list, noun_phrase))
+    minutes = nearest_town[1] if nearest_town else None
+    km = nearest_town[2] if nearest_town else None
+    dist_m = int(round(km * 1000)) if km is not None else None
+    drive_phrase = _format_drive_phrase(minutes)
+    frontage_short = frontage_name.split(",")[0] if frontage_name else None
 
-    # --- established area + density ---
-    closing_bits = []
+    has_town = town_label is not None and dist_m is not None and drive_phrase is not None
+    has_frontage = frontage_short is not None
+
+    # --- opening ---
+    if has_town and has_frontage:
+        opener = rng.choice(_OPENERS_TOWN_AND_FRONTAGE)
+    elif has_town:
+        opener = rng.choice(_OPENERS_TOWN_ONLY)
+    elif has_frontage:
+        opener = rng.choice(_OPENERS_FRONTAGE_ONLY)
+    else:
+        opener = rng.choice(_OPENERS_FALLBACK)
+
+    opening_sentence = opener.format(
+        dist_m=dist_m,
+        drive_phrase=drive_phrase,
+        town=str(escape(town_label)) if town_label else "",
+        frontage=str(escape(frontage_short)) if frontage_short else "",
+        location_line=str(escape(location_line)) if location_line else "This property",
+    )
+    parts = [opening_sentence]
+
+    # --- services ---
+    svc_list, noun_phrase = _format_service_list(evidence_points, rng)
+    if svc_list:
+        services_template = rng.choice(_SERVICES_TEMPLATES)
+        parts.append(services_template.format(
+            svc_list=svc_list,
+            svc_list_cap=svc_list[0].upper() + svc_list[1:],
+            nouns=noun_phrase,
+        ))
+
+    # --- closing: established area + density ---
+    estate_text = None
     if estate:
         name, dist = estate
-        closing_bits.append(Markup("anchored by {}").format(_evid(f"{name} \u00b7 {_format_distance(dist)}")))
-    if density_counts:
-        density_chips = [_evid(f"{_count_label(c)} {label.lower() if c != 1 else _singular(label)}") for label, c in density_counts]
-        density_joined = Markup(" and ").join(density_chips)
-        closing_bits.append(Markup("a dense service base of {} within 5km").format(density_joined))
-    if closing_bits:
-        town_possessive = f"{town_label}'s" if town_label else "the area's"
-        closing = Markup(" and ").join(closing_bits) if len(closing_bits) > 1 else closing_bits[0]
-        parts.append(Markup(
-            "The surrounding area is already residential, {} \u2014 supporting apartments, "
-            "rentals, or mixed-use development for buyers who want easy reach of {} town centre."
-        ).format(closing, town_possessive))
+        estate_text = f"{escape(name)} {_format_distance_away(dist)}"
+    density_text = _format_density_phrase(density_counts)
+
+    if estate_text and density_text:
+        parts.append(rng.choice(_CLOSING_BOTH).format(estate=estate_text, density=density_text))
+    elif estate_text:
+        parts.append(rng.choice(_CLOSING_ESTATE_ONLY).format(estate=estate_text))
+    elif density_text:
+        parts.append(rng.choice(_CLOSING_DENSITY_ONLY).format(density=density_text))
 
     if not parts:
         return None
-    return Markup(" ").join(parts)
+    return Markup(" ".join(parts))
 
 
 def _qr_data_uri(url, box_size=8):
@@ -782,7 +962,7 @@ def render_report_pdf(pin, cell):
         if frontage_name and frontage_dist is not None:
             seal = {
                 "top": "Verified",
-                "mid": f"{int(round(frontage_dist))}m",
+                "mid": _format_distance_away(frontage_dist),
                 "bot": frontage_name.split(",")[0],
             }
 
@@ -791,12 +971,13 @@ def render_report_pdf(pin, cell):
         if town_label:
             facts.append({"label": "Nearest Town", "value": town_label})
             _, minutes, km = nearest_town
-            if km is not None and minutes is not None:
-                dist_val = f"{int(round(km * 1000))}m \u00b7 {minutes} min"
+            dist_m_val = int(round(km * 1000)) if km is not None else None
+            if dist_m_val is not None and minutes is not None:
+                dist_val = f"{_format_distance_away(dist_m_val)} \u00b7 {minutes} min"
             elif minutes is not None:
                 dist_val = f"{minutes} min"
-            elif km is not None:
-                dist_val = f"{km}km"
+            elif dist_m_val is not None:
+                dist_val = _format_distance_away(dist_m_val)
             else:
                 dist_val = "Unknown"
             facts.append({"label": f"Distance to {town_label} Centre", "value": dist_val})
@@ -805,10 +986,14 @@ def render_report_pdf(pin, cell):
         if county:
             facts.append({"label": "County", "value": county})
 
-        # ---- listing description (with inline evidence chips) ----
+        # ---- listing description ----
+        # Randomized phrasing (see _build_description_html); seeded on the
+        # pin id so the same pin regenerates with the same wording instead
+        # of drifting on every re-render.
         description_html = _build_description_html(
             town_label, nearest_town, frontage_name, frontage_dist,
             evidence_points, estate, density_counts,
+            location_line=location_line, seed=getattr(pin, "id", None),
         )
         if description_html is None:
             description_html = Markup(escape(
@@ -817,18 +1002,21 @@ def render_report_pdf(pin, cell):
             ))
 
         # ---- highlights ----
+        # A frontage distance under the "right along" threshold reads as
+        # "0m away", which says nothing useful -- so it's only added once
+        # there's an actual distance worth reporting. Every remaining
+        # highlight is spelled out in full ("37 meters away", "1.2
+        # kilometers away"), never abbreviated to "37m"/"1.2km".
         highlights = []
         if frontage_name:
             short_name = frontage_name.split(",")[0]
-            if frontage_dist is not None and frontage_dist < ROAD_DISTANCE_ALONG_THRESHOLD_M:
-                highlights.append({"text": f"Fronts {short_name}, the main road into town", "dist": "0m"})
-            elif frontage_dist is not None:
-                highlights.append({"text": f"Fronts {short_name}", "dist": f"{int(round(frontage_dist))}m"})
+            if frontage_dist is not None and frontage_dist >= ROAD_DISTANCE_ALONG_THRESHOLD_M:
+                highlights.append({"text": f"Fronts {short_name}", "dist": _format_distance_away(frontage_dist)})
         for label, name, dist in evidence_points:
-            highlights.append({"text": name, "dist": _format_distance(dist)})
+            highlights.append({"text": name, "dist": _format_distance_away(dist)})
         if estate:
             name, dist = estate
-            highlights.append({"text": f"Established neighbourhood: {name}", "dist": _format_distance(dist)})
+            highlights.append({"text": f"Established neighbourhood: {name}", "dist": _format_distance_away(dist)})
 
         # ---- suitability ----
         suitability = [
@@ -838,7 +1026,7 @@ def render_report_pdf(pin, cell):
 
         # ---- landmarks ----
         landmarks = [
-            {"name": name, "distance": _format_distance(dist)}
+            {"name": name, "distance": _format_distance_away(dist)}
             for _label, name, dist in _collect_evidence_points(cell, max_points=5)
         ]
 
@@ -852,9 +1040,6 @@ def render_report_pdf(pin, cell):
             street_view_data_uri = _image_data_uri(getattr(cell, "street_view_image_url", None))
 
         # ---- footer contact ----
-        # Prefers the broker's own WhatsApp/tel line (collected at signup);
-        # falls back to their email, then to the company's own line -- the
-        # same priority order the old ReportLab footer used.
         broker_phone = _broker_phone(pin)
         broker_email = getattr(getattr(pin, "broker", None), "email", None)
         whatsapp_link = _whatsapp_link(broker_phone)
