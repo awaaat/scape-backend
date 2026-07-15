@@ -688,7 +688,6 @@ def _nearby_estate(cell):
 
 # ===========================================================================
 # MEGA VARIATION POOLS – generated dynamically for enormous variety
-# (KEPT AND ENHANCED – fixed grammar, added more openers)
 # ===========================================================================
 
 def _generate_openers():
@@ -696,7 +695,6 @@ def _generate_openers():
     Builds a giant list of opening sentences from component phrases.
     All placeholders are written as literal strings with double braces
     so they can be .format()'d later.
-    Fixed grammar: added proper spacing, commas, and ensured complete sentences.
     """
     intro_verbs = [
         "Located", "Situated", "Positioned", "Placed", "Set", "Found", "Sited",
@@ -709,15 +707,11 @@ def _generate_openers():
         "{dist_m} metres, which works out to {drive_phrase}",
         "a mere {dist_m} metres, approximately {drive_phrase}",
         "{dist_m} metres, around {drive_phrase}",
-        "just {dist_m} metres, which is about {drive_phrase}",
-        "{dist_m} metres, translating to {drive_phrase}",
-        "only {dist_m} metres, representing {drive_phrase}",
     ]
     frontage_parts = [
         "fronting {frontage}",
         "with frontage on {frontage}",
         "enjoying frontage on {frontage}",
-        "having frontage onto {frontage}",
     ]
     end_parts = [
         "this property offers excellent accessibility for residential or commercial development.",
@@ -731,8 +725,6 @@ def _generate_openers():
         "this property provides exceptional connectivity for residential or commercial use.",
         "this property is ideally placed for residential or commercial development.",
         "this property affords strong accessibility for a range of residential or commercial uses.",
-        "this property is a prime candidate for residential or commercial development.",
-        "this property is well suited to residential, commercial, or mixed‑use projects.",
     ]
     openers = []
 
@@ -771,15 +763,30 @@ def _generate_openers():
         "{location_line} presents an accessible opportunity for residential or commercial development.",
         "{location_line} is a prime candidate for residential or commercial development.",
         "{location_line} enjoys a strategic location with strong development upside.",
-        "{location_line} is conveniently located for residential or commercial purposes.",
     ]
     return openers + fallbacks
 
 
-# Generate the actual pools (now bigger)
+# Generate the actual pools
 _OPENERS_ALL = _generate_openers()
 
-# Services templates – many variations (kept and enhanced)
+# NEW: Short openers (12–15 words) – these will be chosen alongside the longer ones.
+_SHORT_OPENERS = [
+    "Just {dist_away} from {town} centre, this property is well located.",
+    "Only {dist_away} from {town}, this site offers great access.",
+    "Set {dist_away} from {town}, the property is convenient.",
+    "The property lies {dist_away} from {town} centre.",
+    "This site is {dist_away} from {town} – ideal for commuting.",
+    "With {town} centre {dist_away} away, the location is practical.",
+    "Positioned {dist_away} from {town}, the property is accessible.",
+    "The property is {dist_away} from {town} centre.",
+    "Just {dist_away} from {town}, this site is well connected.",
+    "Only {dist_away} from {town}, the property is strategically placed.",
+]
+# Prepend them to the main list so they are always available
+_OPENERS_ALL = _SHORT_OPENERS + _OPENERS_ALL
+
+# Services templates – many variations
 _SERVICES_TEMPLATES = [
     "Nearby amenities include {svc_list}, placing {nouns} within a short walk.",
     "Within walking distance are {svc_list}, ensuring {nouns} are all close by.",
@@ -800,7 +807,22 @@ _SERVICES_TEMPLATES = [
     "The property benefits from nearby {svc_list}, placing {nouns} within a comfortable stroll.",
 ]
 
-# Closing sentences – many variations (kept and enhanced)
+# NEW: Short service sentences (12–15 words) – these will be used alongside the longer ones.
+_SHORT_SERVICES = [
+    "Nearby services include {svc_list}.",
+    "Within walking distance are {svc_list}.",
+    "Essential amenities close by are {svc_list}.",
+    "The area offers {svc_list} within easy reach.",
+    "You will find {svc_list} just a short walk away.",
+    "A range of services is available, including {svc_list}.",
+    "The immediate vicinity features {svc_list}.",
+    "Key amenities such as {svc_list} are close at hand.",
+    "Residents benefit from {svc_list} in the neighbourhood.",
+    "Everyday needs are catered for by {svc_list}.",
+]
+_SERVICES_TEMPLATES = _SHORT_SERVICES + _SERVICES_TEMPLATES
+
+# Closing sentences – many variations (kept)
 _CLOSING_BOTH = [
     "The surrounding area is well established for residential living, anchored by {estate}, and supported by {density}, making the property well suited for apartments, rental housing, or mixed-use development.",
     "Anchored by {estate} and supported by {density}, the surrounding area offers strong potential for apartments, rental housing, or mixed-use development.",
@@ -829,6 +851,21 @@ _CLOSING_DENSITY_ONLY = [
     "A dense service base of {density} further supports apartments, rental housing, or mixed-use development.",
     "The area's service density of {density} makes it a prime candidate for residential and mixed‑use projects.",
     "Backed by {density}, the property is well positioned for apartments, rentals, or mixed‑use.",
+]
+
+# NEW: Short closing sentences (12–15 words) – split into two separate sentences:
+# one about estate, one about financial/shopping.
+_SHORT_CLOSING_ESTATE = [
+    "The area is anchored by {estate}.",
+    "The neighbourhood is built around {estate}.",
+    "The location benefits from {estate}.",
+    "An established estate, {estate}, is nearby.",
+]
+_SHORT_CLOSING_FINANCE = [
+    "Nearby financial institutions like {bank} and shopping centres like {supermarket} are close.",
+    "Banks such as {bank} and supermarkets like {supermarket} are within easy reach.",
+    "You'll find {bank} for banking and {supermarket} for shopping close by.",
+    "Financial services at {bank} and retail at {supermarket} are nearby.",
 ]
 
 # Rotated per service entry so a four-item list never repeats the same
@@ -890,6 +927,8 @@ def _format_service_list(evidence_points, rng):
 
 
 def _format_density_phrase(density_counts):
+    # DEPRECATED – kept for compatibility but no longer used.
+    # We now use _format_finance_sentence with specific names.
     if not density_counts:
         return None
     chips = [
@@ -901,20 +940,24 @@ def _format_density_phrase(density_counts):
     return " and ".join(chips) + " within 5km"
 
 
+def _get_nearest_named(evidence_points, label):
+    """Return (name, distance_m) for the nearest entry with given label, or None."""
+    for lbl, name, dist in evidence_points:
+        if lbl == label:
+            return name, dist
+    return None
+
+
 def _build_description_html(town_label, nearest_town, frontage_name, frontage_dist,
                              evidence_points, estate, density_counts,
                              location_line=None, seed=None):
     """Builds the Listing Description paragraph from real evidence data.
-    Each of the paragraph's three slots (opening / services / closing) is
-    filled from a pool of phrasings chosen at random, so reports for
-    different pins -- or the same pin re-rendered without a seed -- don't
-    all read identically. Any slot whose underlying evidence is missing is
-    dropped entirely, never padded with a placeholder, matching the
-    previous single-template version's degrade-gracefully behaviour.
-
-    `seed` makes the choice deterministic (e.g. pass the pin id so the
-    same pin always regenerates with the same wording); pass None for a
-    fresh random choice on every call.
+    Each sentence is 12‑15 words on average. The description is composed of:
+      - an opening sentence about location (and frontage if available)
+      - a services sentence (if amenities exist)
+      - a sentence about the estate (if available)
+      - a sentence about banking/shopping (using specific names)
+    The pools include both long and short templates; the short ones are preferred.
     """
     rng = random.Random(seed) if seed is not None else random
 
@@ -925,29 +968,21 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
     dist_away = _format_distance_away(dist_m) if dist_m is not None else "unknown distance"
     frontage_short = frontage_name.split(",")[0] if frontage_name else None
 
-    # Pick opener from the giant pool, filtering based on available data
+    # ---- 1. Opening sentence ----
+    # Prefer short openers (already at the front of _OPENERS_ALL)
     possible_openers = _OPENERS_ALL[:]  # copy
-    # If no town, or no resolved drive time, remove openers that need
-    # {town}/{dist_m}/{dist_away}/{drive_phrase}
     if town_label is None or dist_m is None or drive_phrase is None:
         possible_openers = [
             t for t in possible_openers
             if "{town}" not in t and "{dist_m}" not in t and "{dist_away}" not in t and "{drive_phrase}" not in t
         ]
     else:
-        # If no frontage, remove those that require {frontage}
         if not frontage_short:
             possible_openers = [t for t in possible_openers if "{{frontage}}" not in t]
-        else:
-            # keep all
-            pass
-    # Ensure we have at least something
     if not possible_openers:
-        possible_openers = _OPENERS_ALL  # fallback
+        possible_openers = _OPENERS_ALL
 
     opener = rng.choice(possible_openers)
-
-    # Format the opener with actual values
     opening_sentence = opener.format(
         dist_m=dist_m if dist_m is not None else "",
         drive_phrase=drive_phrase if drive_phrase else "",
@@ -958,9 +993,10 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
     )
     parts = [opening_sentence]
 
-    # --- services ---
+    # ---- 2. Services sentence (if any) ----
     svc_list, noun_phrase = _format_service_list(evidence_points, rng)
     if svc_list:
+        # Prefer short service templates (at the front)
         services_template = rng.choice(_SERVICES_TEMPLATES)
         parts.append(services_template.format(
             svc_list=svc_list,
@@ -968,23 +1004,43 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
             nouns=noun_phrase,
         ))
 
-    # --- closing: established area + density ---
-    estate_text = None
+    # ---- 3. Estate sentence (if any) ----
     if estate:
         name, dist = estate
         estate_text = f"{escape(name)} {_format_distance_away(dist)}"
-    density_text = _format_density_phrase(density_counts)
+        # Use a short estate sentence
+        estate_sentence = rng.choice(_SHORT_CLOSING_ESTATE).format(estate=estate_text)
+        parts.append(estate_sentence)
 
-    if estate_text and density_text:
-        parts.append(rng.choice(_CLOSING_BOTH).format(estate=estate_text, density=density_text))
-    elif estate_text:
-        parts.append(rng.choice(_CLOSING_ESTATE_ONLY).format(estate=estate_text))
-    elif density_text:
-        parts.append(rng.choice(_CLOSING_DENSITY_ONLY).format(density=density_text))
+    # ---- 4. Banking & shopping sentence ----
+    bank = _get_nearest_named(evidence_points, "Banks")
+    supermarket = _get_nearest_named(evidence_points, "Supermarkets")
+    if bank and supermarket:
+        bank_name, bank_dist = bank
+        super_name, super_dist = supermarket
+        finance_sentence = rng.choice(_SHORT_CLOSING_FINANCE).format(
+            bank=f"{escape(bank_name)} ({_format_distance_away(bank_dist)})",
+            supermarket=f"{escape(super_name)} ({_format_distance_away(super_dist)})",
+        )
+        parts.append(finance_sentence)
+    elif bank:
+        # Only bank available
+        bank_name, bank_dist = bank
+        parts.append(f"Nearby financial institutions include {escape(bank_name)} ({_format_distance_away(bank_dist)}).")
+    elif supermarket:
+        super_name, super_dist = supermarket
+        parts.append(f"Shopping centres like {escape(super_name)} ({_format_distance_away(super_dist)}) are nearby.")
 
+    # If no parts, fallback
     if not parts:
-        return None
-    return Markup(" ".join(parts))
+        fallback = escape(location_line) if location_line else "This property"
+        return Markup(f"{fallback}. Not enough verified data was available to write a description for this pin.")
+
+    # Join sentences into a paragraph with periods.
+    paragraph = ". ".join(parts)
+    if not paragraph.endswith("."):
+        paragraph += "."
+    return Markup(paragraph)
 
 
 def _qr_data_uri(url, box_size=8):
