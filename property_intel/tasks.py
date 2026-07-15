@@ -11,6 +11,8 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
+from django.conf import settings
+from django.core.mail import EmailMessage
 from django.db import models, transaction
 from django.utils import timezone
 
@@ -163,6 +165,22 @@ def generate_report_task(self, report_id):
                 ai_summary_text=summary_text,
             )
         logger.info("Report %s generated successfully.", report_id)
+
+        try:
+            broker_email = report.pin.broker.email
+            EmailMessage(
+                subject="Your Scape property report is ready",
+                body=(
+                    f"Your property report is ready.\n\n"
+                    f"Download it here: {storage_path}\n\n"
+                    f"This link stays live for a limited time -- save a copy if you need it later."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[broker_email],
+            ).send(fail_silently=False)
+            logger.info("Report %s ready-email sent to %s", report_id, broker_email)
+        except Exception as exc:
+            logger.error("Report %s: ready-email failed to send: %s", report_id, exc)
 
     except ReportRenderError as exc:
         # A broken PDF render is not transient — retrying won't fix bad
