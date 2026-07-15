@@ -365,9 +365,13 @@ def _format_distance_away(meters):
     away' -- used everywhere a distance is shown to a broker or buyer, so
     every number on the report is unambiguous on its own, without relying
     on a nearby label to explain what a bare '37m' means. Never abbreviates
-    and never omits the trailing 'away'."""
+    and never omits the trailing 'away'. Anything under 50m reads as
+    "0 meters away" otherwise -- nonsensical when the property IS
+    effectively at that landmark -- so it gets its own phrasing instead."""
     if meters is None:
         return "distance unknown"
+    if meters < 50:
+        return "right in the area"
     if meters < 1000:
         return f"{int(round(meters))} meters away"
     km = meters / 1000
@@ -914,9 +918,16 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
 
     # Pick opener from the giant pool, filtering based on available data
     possible_openers = _OPENERS_ALL[:]  # copy
-    # If no town, remove those that require {town}
+    # If no town, or no resolved drive time, remove openers that need
+    # {town}/{dist_m}/{dist_away}/{drive_phrase} -- these are the REAL
+    # single-brace placeholders left in the string after the f-string
+    # double braces ({{town}} etc) collapsed at generation time. Checking
+    # for "{{town}}" here would never match anything.
     if town_label is None or dist_m is None or drive_phrase is None:
-        possible_openers = [t for t in possible_openers if "{{town}}" not in t and "{{dist_m}}" not in t and "{{dist_away}}" not in t]
+        possible_openers = [
+            t for t in possible_openers
+            if "{town}" not in t and "{dist_m}" not in t and "{dist_away}" not in t and "{drive_phrase}" not in t
+        ]
     else:
         # If no frontage, remove those that require {frontage}
         if not frontage_short:
