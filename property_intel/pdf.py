@@ -698,7 +698,7 @@ def _generate_openers():
     """
     intro_verbs = [
         "Located", "Situated", "Positioned", "Placed", "Set", "Found", "Sited",
-        "Nestled", "Lying", "Sitting", "Offering", "Benefiting from",
+        "Nestled", "Lying", "Sitting", "Found", "Benefiting from",
     ]
     distance_phrases = [
         "just {dist_m} metres, approximately {drive_phrase}",
