@@ -91,58 +91,80 @@ def _initiate_report_payment(report, amount):
     return txn.authorization_url, None
 
 
-def _try_pay_from_wallet(user_id, *, report_price):
+def _try_pay_from_wallet(user_id, email, *, report_price):
     """
-    'Auto-detect balance': before bouncing a logged-in broker to a fresh
-    Paystack checkout, see if their wallet already covers this report.
-    Returns True (and leaves a report_debit WalletTransaction behind) on
-    success; returns False with zero side effects if there's no linked
-    user, no wallet, or insufficient balance.
+    'Auto-detect balance': before bouncing a broker to a fresh Paystack
+    checkout, see if an existing balance already covers this report -- a
+    logged-in user's wallet if there's a linked account, otherwise a
+    GuestCredit keyed on their email (e.g. an earlier refunded anonymous
+    payment). Returns True (and leaves a debit transaction behind) on
+    success; returns False with zero side effects otherwise.
     """
     from django.contrib.auth import get_user_model
-    from payments.models import UserWallet, WalletTransaction
+    from payments.models import GuestCredit, GuestCreditTransaction, UserWallet, WalletTransaction
 
-    User = get_user_model()
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
-        return False
+    if user_id:
+        User = get_user_model()
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            user = None
+        if user is not None:
+            wallet = UserWallet.get_or_create_for_user(user)
+            if wallet.debit(report_price):
+                WalletTransaction.objects.create(
+                    wallet=wallet,
+                    transaction_type="report_debit",
+                    amount=report_price,
+                    balance_after=wallet.balance,
+                    reference="",
+                    note="Report paid from wallet balance (auto-detected at submission)",
+                )
+                return True
 
-    wallet = UserWallet.get_or_create_for_user(user)
-    if not wallet.debit(report_price):
-        return False
+    if email:
+        credit = GuestCredit.get_or_create_for_email(email)
+        if credit.debit(report_price):
+            GuestCreditTransaction.objects.create(
+                guest_credit=credit,
+                transaction_type="report_debit",
+                amount=report_price,
+                balance_after=credit.balance,
+                reference="",
+                note="Report paid from guest credit balance (auto-detected at submission)",
+            )
+            return True
 
-    WalletTransaction.objects.create(
-        wallet=wallet,
-        transaction_type="report_debit",
-        amount=report_price,
-        balance_after=wallet.balance,
-        reference="",
-        note="Report paid from wallet balance (auto-detected at submission)",
-    )
-    return True
+    return False
 
 
-def _wallet_balance(user_id):
+def _wallet_balance(user_id, email=None):
     """
-    Current wallet balance for a logged-in broker's linked user, WITHOUT
-    debiting it -- used only to compute how much of a partial balance can
-    be applied toward a report's price before sending the remainder to
-    Paystack. Returns Decimal('0') for anonymous/no-wallet users. The
-    actual debit happens later, only once payment is confirmed -- see
-    property_intel/signals.py.
+    Current spendable balance, WITHOUT debiting it -- used only to compute
+    how much of a partial balance can be applied toward a report's price
+    before sending the remainder to Paystack. Checks a logged-in user's
+    wallet first; falls back to a GuestCredit balance by email for
+    anonymous brokers (e.g. an earlier refunded payment). Returns
+    Decimal('0') if neither applies. The actual debit happens later, only
+    once payment is confirmed -- see property_intel/signals.py.
     """
-    if not user_id:
-        return Decimal("0")
-    from django.contrib.auth import get_user_model
-    from payments.models import UserWallet
+    if user_id:
+        from django.contrib.auth import get_user_model
+        from payments.models import UserWallet
 
-    User = get_user_model()
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
-        return Decimal("0")
-    return UserWallet.get_or_create_for_user(user).balance
+        User = get_user_model()
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            user = None
+        if user is not None:
+            return UserWallet.get_or_create_for_user(user).balance
+
+    if email:
+        from payments.models import GuestCredit
+        return GuestCredit.get_or_create_for_email(email).balance
+
+    return Decimal("0")
 
 
 def _client_ip(request):
@@ -227,7 +249,7 @@ class PinSubmitView(APIView):
         # falling back to a fresh Paystack checkout. Only brokers linked to
         # a logged-in dashboard account have a wallet, so this is a clean
         # no-op for anonymous submissions.
-        if broker.user_id and _try_pay_from_wallet(broker.user_id, report_price=PROPERTY_REPORT_PRICE_KES):
+        if _try_pay_from_wallet(broker.user_id, broker.email, report_price=PROPERTY_REPORT_PRICE_KES):
             report = PropertyReport.objects.create(
                 pin=pin, status="pending", is_free_tier=False, is_paid=True, paid_at=timezone.now(),
                 price_charged_kes=PROPERTY_REPORT_PRICE_KES,
@@ -241,7 +263,7 @@ class PinSubmitView(APIView):
         # the wallet itself isn't touched until payment_succeeded confirms
         # the remainder went through (property_intel/signals.py), so an
         # abandoned checkout never strands the balance.
-        wallet_applied = _wallet_balance(broker.user_id)
+        wallet_applied = _wallet_balance(broker.user_id, broker.email)
         remainder = Decimal(str(PROPERTY_REPORT_PRICE_KES)) - wallet_applied
         if remainder <= 0:
             wallet_applied = Decimal(str(PROPERTY_REPORT_PRICE_KES))
@@ -380,7 +402,7 @@ class OTPVerifyView(APIView):
         # and OTP verification (rare, but possible under concurrent use).
         # Same partial-wallet-balance logic as PinSubmitView -- see there
         # for why the wallet isn't debited until payment is confirmed.
-        wallet_applied = _wallet_balance(report.pin.broker.user_id)
+        wallet_applied = _wallet_balance(report.pin.broker.user_id, report.pin.broker.email)
         remainder = Decimal(str(PROPERTY_REPORT_PRICE_KES)) - wallet_applied
         if remainder <= 0:
             wallet_applied = Decimal(str(PROPERTY_REPORT_PRICE_KES))

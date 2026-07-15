@@ -71,9 +71,27 @@ def _refund_wallet(report, reason=""):
     """
     user_id = report.pin.broker.user_id
     if not user_id:
-        logger.warning(
-            "Report %s: paid report has no linked user — cannot refund KES %s to wallet (broker %s)",
-            report.id, report.price_charged_kes, report.pin.broker_id,
+        from payments.models import GuestCredit, GuestCreditTransaction
+        broker_email = report.pin.broker.email
+        if not broker_email:
+            logger.warning(
+                "Report %s: paid report has no linked user AND no broker email — cannot refund KES %s (broker %s)",
+                report.id, report.price_charged_kes, report.pin.broker_id,
+            )
+            return
+        credit = GuestCredit.get_or_create_for_email(broker_email)
+        credit.credit(report.price_charged_kes)
+        GuestCreditTransaction.objects.create(
+            guest_credit=credit,
+            transaction_type="refund",
+            amount=report.price_charged_kes,
+            balance_after=credit.balance,
+            reference=str(report.id),
+            note=f"Refund for report {report.id} ({reason})",
+        )
+        logger.info(
+            "Report %s: refunded KES %s to guest credit for %s (%s)",
+            report.id, report.price_charged_kes, broker_email, reason,
         )
         return
 

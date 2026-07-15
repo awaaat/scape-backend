@@ -225,3 +225,70 @@ class WalletTransaction(models.Model):
 
     def __str__(self):
         return f"{self.get_transaction_type_display()} KES {self.amount} — wallet {self.wallet_id}"
+
+
+class GuestCredit(models.Model):
+    """
+    Same idea as UserWallet, but keyed on a Broker's email instead of a
+    logged-in Django user -- covers an anonymous (homepage, no-account)
+    broker whose paid report failed and needs a refund, with no UserWallet
+    to put it in. Looked up by Broker.email, which is unique and always
+    set (Broker predates login entirely).
+    """
+    email = models.EmailField(unique=True, db_index=True)
+    balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return f"GuestCredit({self.email}) KES {self.balance}"
+
+    @classmethod
+    def get_or_create_for_email(cls, email):
+        credit, _ = cls.objects.get_or_create(email=email)
+        return credit
+
+    def credit(self, amount):
+        """Add amount to balance atomically."""
+        from django.db.models import F
+        GuestCredit.objects.filter(pk=self.pk).update(balance=F("balance") + amount)
+        self.refresh_from_db(fields=["balance"])
+
+    def debit(self, amount):
+        """
+        Deduct amount atomically. Returns True if successful, False if
+        insufficient funds -- same conditional-UPDATE pattern as
+        UserWallet.debit(), so two concurrent submissions can't both
+        succeed against the same balance.
+        """
+        from django.db.models import F
+        updated = GuestCredit.objects.filter(
+            pk=self.pk, balance__gte=amount
+        ).update(balance=F("balance") - amount)
+        if updated:
+            self.refresh_from_db(fields=["balance"])
+            return True
+        return False
+
+
+class GuestCreditTransaction(models.Model):
+    """Append-only ledger for GuestCredit, mirroring WalletTransaction."""
+    TYPES = [
+        ("report_debit", "Report charge"),
+        ("refund", "Refund"),
+    ]
+    guest_credit = models.ForeignKey(GuestCredit, on_delete=models.CASCADE, related_name="transactions")
+    transaction_type = models.CharField(max_length=20, choices=TYPES)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    balance_after = models.DecimalField(max_digits=10, decimal_places=2)
+    reference = models.CharField(max_length=100, blank=True, help_text="Report id")
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} KES {self.amount} — guest {self.guest_credit_id}"
