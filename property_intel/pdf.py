@@ -1027,24 +1027,63 @@ def _get_nearest_named(evidence_points, label):
     return None
 
 
-def _format_density_phrase(density_counts):
-    """Turns [(label, count), ...] into a short 'X banks and Y
-    supermarkets within 5km' clause. Returns None if there's nothing to
-    report -- this clause was previously computed and passed in but
-    silently unused."""
-    if not density_counts:
+def _named_density_points_for_report(cell, evidence_points, estate, max_per_category=2):
+    """Nearest 2 named Banks and 2 named Supermarkets within 5km that
+    have NOT already been cited elsewhere in the description (the
+    evidence-point sentences or the estate line) -- so the closing
+    financial/retail sentence always introduces new names rather than
+    repeating ones already mentioned. Returns {label: [(name, dist_m), ...]}.
+    """
+    exclude = {name for _label, name, _dist in evidence_points}
+    if estate:
+        exclude.add(estate[0])
+    amenity_fields = dict(_discover_amenity_fields(cell))
+    result = {}
+    for label in ("Banks", "Supermarkets"):
+        entries = amenity_fields.get(label) or []
+        candidates = [
+            (e.get("name"), e.get("distance_m"))
+            for e in entries
+            if e.get("name")
+            and e.get("distance_m") is not None
+            and e["distance_m"] <= 5000
+            and e.get("name") not in exclude
+        ]
+        candidates.sort(key=lambda p: p[1])
+        if candidates:
+            result[label] = candidates[:max_per_category]
+    return result
+
+
+_DENSITY_CATEGORY_NOUN = {
+    "Banks": "financial institutions",
+    "Supermarkets": "supermarkets and malls",
+}
+
+
+def _format_named_density_sentence(named_density):
+    """Turns {'Banks': [(name,dist),...], 'Supermarkets': [...]} into a
+    sentence naming the actual nearby banks and supermarkets/malls with
+    distances. Returns None if there's nothing new to report."""
+    if not named_density:
         return None
-    chips = [
-        f"{_count_label(c)} {label.lower() if c != 1 else _singular(label)}"
-        for label, c in density_counts
-    ]
-    if len(chips) == 1:
-        return f"{chips[0]} within 5km"
-    return " and ".join(chips) + " within 5km"
+    chunks = []
+    for label in ("Banks", "Supermarkets"):
+        entries = named_density.get(label)
+        if not entries:
+            continue
+        noun = _DENSITY_CATEGORY_NOUN[label]
+        names = " and ".join(
+            f"{escape(name)} ({_format_distance_away(dist)})" for name, dist in entries
+        )
+        chunks.append(f"{noun} like {names}")
+    if not chunks:
+        return None
+    return "The area also offers " + ", plus ".join(chunks) + ", a strong service base for buyers."
 
 
 def _build_description_html(town_label, nearest_town, frontage_name, frontage_dist,
-                             evidence_points, estate, density_counts,
+                             evidence_points, estate, named_density,
                              location_line=None, seed=None):
     """
     Builds the Listing Description as separate, self-contained sentences:
@@ -1122,10 +1161,10 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
             estate_sentence += "."
         sentences.append(estate_sentence)
 
-    # ---- 7. Service-density sentence ----
-    density_text = _format_density_phrase(density_counts)
-    if density_text:
-        sentences.append(f"The area also offers {density_text}, a strong service base for buyers.")
+    # ---- 7. Named financial/retail density sentence ----
+    density_sentence = _format_named_density_sentence(named_density)
+    if density_sentence:
+        sentences.append(density_sentence)
 
     if not sentences:
         fallback = escape(location_line) if location_line else "This property"
@@ -1187,7 +1226,7 @@ def render_report_pdf(pin, cell):
         county = _cell_county(cell)
         evidence_points = _collect_evidence_points(cell)
         estate = _nearby_estate(cell)
-        density_counts = _evidence_density_counts(cell)
+        named_density = _named_density_points_for_report(cell, evidence_points, estate)
 
         frontage_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
         frontage_dist = getattr(cell, "nearest_road_distance_m", None)
@@ -1237,7 +1276,7 @@ def render_report_pdf(pin, cell):
         # ---- listing description ----
         description_html = _build_description_html(
             town_label, nearest_town, frontage_name, frontage_dist,
-            evidence_points, estate, density_counts,
+            evidence_points, estate, named_density,
             location_line=location_line, seed=str(pin.id) if pin.id else None,
         )
         if description_html is None:
