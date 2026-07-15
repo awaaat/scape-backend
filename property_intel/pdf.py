@@ -704,7 +704,7 @@ def _generate_openers():
         "just {dist_m} metres, approximately {drive_phrase}",
         "{dist_m} metres, about {drive_phrase}",
         "only {dist_m} metres, roughly {drive_phrase}",
-        "{dist_m} metres, some {drive_phrase}",
+        "{dist_m} metres, which works out to {drive_phrase}",
         "a mere {dist_m} metres, approximately {drive_phrase}",
         "{dist_m} metres, around {drive_phrase}",
     ]
