@@ -5,6 +5,7 @@ gets meaning — payments itself has none.
 """
 import hashlib
 import logging
+import threading
 
 from django.db import transaction as db_transaction
 from django.dispatch import receiver
@@ -156,5 +157,5 @@ def handle_property_report_payment(sender, reference, purpose, external_referenc
         except Exception as exc:
             logger.warning("Report %s: wallet debit failed (non-fatal): %s", report.id, exc)
 
-    generate_report_task.delay(str(report.id))
+    threading.Thread(target=generate_report_task, args=(str(report.id),), daemon=True).start()
     logger.info("Report %s marked paid via %s, generation dispatched.", report.id, reference)

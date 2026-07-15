@@ -20,6 +20,7 @@ response says so plainly — wiring an actual payment provider in is future
 scope, deliberately kept out of property_intel.
 """
 import logging
+import threading
 from decimal import Decimal
 
 from django.conf import settings
@@ -219,7 +220,7 @@ class PinSubmitView(APIView):
 
         if fingerprint.consume_free_report():
             report = PropertyReport.objects.create(pin=pin, status="pending", is_free_tier=True)
-            generate_report_task.delay(str(report.id))
+            threading.Thread(target=generate_report_task, args=(str(report.id),), daemon=True).start()
             return Response(PropertyReportSerializer(report).data, status=status.HTTP_201_CREATED)
 
         # Free tier exhausted — try the broker's wallet balance before
@@ -231,7 +232,7 @@ class PinSubmitView(APIView):
                 pin=pin, status="pending", is_free_tier=False, is_paid=True, paid_at=timezone.now(),
                 price_charged_kes=PROPERTY_REPORT_PRICE_KES,
             )
-            generate_report_task.delay(str(report.id))
+            threading.Thread(target=generate_report_task, args=(str(report.id),), daemon=True).start()
             return Response(PropertyReportSerializer(report).data, status=status.HTTP_201_CREATED)
 
         # Wallet didn't cover the FULL price, but may still have a partial
@@ -372,7 +373,7 @@ class OTPVerifyView(APIView):
             return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
 
         if fingerprint.consume_free_report():
-            generate_report_task.delay(str(report.id))
+            threading.Thread(target=generate_report_task, args=(str(report.id),), daemon=True).start()
             return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
 
         # Free reports ran out in the gap between the original submission
@@ -499,7 +500,7 @@ class ReportRetryView(APIView):
             )
 
         PropertyReport.objects.filter(pk=report_id).update(status="pending", failure_reason="")
-        generate_report_task.delay(str(report.id))
+        threading.Thread(target=generate_report_task, args=(str(report.id),), daemon=True).start()
         report.refresh_from_db()
         return Response(PropertyReportSerializer(report).data, status=status.HTTP_200_OK)
 

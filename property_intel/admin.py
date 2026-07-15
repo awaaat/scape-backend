@@ -1,3 +1,5 @@
+import threading
+
 from django.contrib import admin
 from django.utils import timezone
 
@@ -20,7 +22,7 @@ def approve_reports(modeladmin, request, queryset):
     for report in queryset.filter(status="awaiting_review"):
         report.status = "pending"
         report.save(update_fields=["status"])
-        generate_report_task.delay(str(report.id))
+        threading.Thread(target=generate_report_task, args=(str(report.id),), daemon=True).start()
         approved += 1
     modeladmin.message_user(request, f"{approved} report(s) approved and queued for generation.")
 
