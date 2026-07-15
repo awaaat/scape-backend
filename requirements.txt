@@ -21,4 +21,4 @@ djangorestframework-simplejwt>=5.3
 qrcode[pil]==8.2
 weasyprint==69.0
 Jinja2==3.1.4
-fonttools>=4.63.0qrcode==8.2
+fonttools>=4.63.0
