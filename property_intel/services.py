@@ -15,6 +15,15 @@ used back-to-back:
 Actual Google API calls live in property_intel/google_client.py, not here.
 This file never imports Maps-specific request logic directly — it decides
 WHEN enrichment is needed, google_client.py handles HOW to fetch it.
+
+--------------------------------------------------------------------------
+CHANGELOG:
+  - Added merge_brokers_for_user(): bridges an anonymous Broker record
+    (created off a DeviceFingerprint, no login involved) to a real User
+    once that person signs up/logs in on a DIFFERENT device than the one
+    they used the free tier on. See its docstring for why this is safe to
+    call on every login and does NOT touch free-tier allowance.
+--------------------------------------------------------------------------
 """
 import re
 import logging
@@ -23,6 +32,7 @@ import requests
 from django.db.models import F
 
 from .models import (
+    Broker,
     LocationCell,
     PropertyPin,
     compute_geohash,
@@ -315,3 +325,58 @@ def create_pin(raw_input, broker, submitted_by=""):
     )
 
     return pin, cell
+
+
+# ---------------------------------------------------------------------------
+# Anonymous → authenticated identity bridging
+# ---------------------------------------------------------------------------
+
+def merge_brokers_for_user(user):
+    """
+    Attaches any anonymous Broker record(s) matching this user's email to
+    their auth User account. Called on every successful LOGIN (not signup —
+    see why below).
+
+    Why login, not signup:
+        At signup, a person has only TYPED an email — that proves nothing.
+        Merging there would let anyone claim a stranger's report history
+        (and anything derived from it, e.g. a wallet credit tied to a paid
+        report) just by entering that person's email on the signup form.
+        At login, a correct password has already been verified, which is
+        real proof of ownership. So this must run post-authenticate(),
+        never post-signup-form-submit.
+
+    Why this can't be abused to farm extra free reports:
+        This function ONLY reassigns Broker.user. It never touches
+        DeviceFingerprint.free_reports_remaining, never creates a Broker,
+        and never resets any fraud/suspicion state. The free-tier gate
+        lives entirely on DeviceFingerprint, keyed by fingerprint_hash —
+        logging in on ten different emails does not grant a single extra
+        free report anywhere. This function is purely cosmetic/UX
+        (history visibility), not an allowance mechanism.
+
+    Why `user__isnull=True` matters:
+        Broker.email and the auth User's email/username are both unique,
+        so under normal operation at most one Broker can ever match an
+        email, and it can only ever belong to nobody or to this exact
+        user already. The filter is still here as defense in depth: it
+        guarantees this function can NEVER reassign a Broker away from a
+        different, already-linked user, even if some future code path
+        breaks that uniqueness assumption.
+
+    Idempotent and cheap: safe to call unconditionally on every login,
+    not just the first one after signup (covers "signed up on desktop
+    months ago, but only just started using mobile anonymously before
+    logging in there too").
+    """
+    updated = Broker.objects.filter(
+        email__iexact=user.email, user__isnull=True
+    ).update(user=user)
+
+    if updated:
+        logger.info(
+            "Login merge: attached %d anonymous Broker record(s) to user %s (%s)",
+            updated, user.pk, user.email,
+        )
+
+    return updated
