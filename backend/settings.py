@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "daphne",
     "django.contrib.staticfiles",
     "rest_framework",
     "corsheaders",
@@ -49,6 +50,8 @@ INSTALLED_APPS = [
     "property_intel",
     "payments",
     "users",
+    "contracts",
+    "channels",
     "rest_framework_simplejwt.token_blacklist",
 ]
 
@@ -85,6 +88,17 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "backend.wsgi.application"
+ASGI_APPLICATION = "backend.asgi.application"
+
+# ─── Channels (websockets — contracts live messaging) ───────────────
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [env("CHANNEL_LAYERS_REDIS_URL", default="redis://localhost:6379/1")],
+        },
+    },
+}
 
 # ─── Database – local PostgreSQL (dev) ─────────────────────────────
 DATABASES = {
@@ -95,8 +109,8 @@ DATABASES = {
         "PASSWORD": env("DB_PASSWORD"),
         "HOST": env("DB_HOST"),
         "PORT": env("DB_PORT", default="5432"),
-        "CONN_MAX_AGE": 60,
-        "OPTIONS": {"sslmode": "require"},
+        "CONN_MAX_AGE": 0,
+        "OPTIONS": {"sslmode": "require", "prepare_threshold": None},
     }
 }
 

@@ -32,6 +32,7 @@ urlpatterns = [
     path("api/", include("jobs.urls")),
     path("api/", include("property_intel.urls")),   # add this
     path("api/", include("payments.urls")),
+    path("api/", include("contracts.urls")),
     path("api/users/", include("users.urls")),
 ]
 if settings.DEBUG:

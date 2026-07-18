@@ -22,3 +22,6 @@ qrcode[pil]==8.2
 weasyprint==69.0
 Jinja2==3.1.4
 fonttools>=4.63.0
+channels==4.1.0
+channels-redis==4.2.0
+daphne==4.1.2
