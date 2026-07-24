@@ -195,7 +195,9 @@ class PinSubmitView(APIView):
         data = serializer.validated_data
 
         if data["email"].strip().lower() in settings.ADMIN_BYPASS_EMAILS:
-            broker = self._resolve_broker(request, data["email"], None, _client_ip(request))
+            bypass_ip = _client_ip(request)
+            bypass_fingerprint = self._resolve_fingerprint(data["fingerprint_hash"], bypass_ip)
+            broker = self._resolve_broker(request, data["email"], bypass_fingerprint, bypass_ip)
             try:
                 pin, cell = create_pin(data["raw_input"], broker=broker)
             except LocationParseError as exc:
