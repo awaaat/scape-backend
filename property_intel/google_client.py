@@ -1322,6 +1322,9 @@ def _point_to_polyline_distance_m(lat0, lng0, nodes):
     return min(_haversine_m(lat0, lng0, n["lat"], n["lon"]) for n in nodes if "lat" in n and "lon" in n)
 
 
+MAJOR_ROAD_TAGS = ("motorway", "trunk", "primary")
+
+
 def _query_osm_nearby_roads(lat0, lng0, cell, top_n=NEARBY_ROADS_COUNT):
     """
     Queries Overpass for real, named roads within an expanding radius.
@@ -1330,6 +1333,13 @@ def _query_osm_nearby_roads(lat0, lng0, cell, top_n=NEARBY_ROADS_COUNT):
     -- only its closest segment counts). Returns [] if OSM has no coverage
     in range or every request fails -- callers must fall back to the
     Google-based path in that case, never invent a distance.
+
+    Guarantees a slot for the nearest motorway/trunk/primary road if one
+    exists in range, even when it isn't among the top_n nearest by raw
+    distance -- a highway 800m out is a stronger selling point than a
+    fourth residential street 50m out, and pure-distance ranking was
+    silently dropping every major road once enough closer minor streets
+    existed.
     """
     highway_filter = "|".join(OSM_ROAD_HIGHWAY_TAGS)
     for radius_m in OSM_SEARCH_RADII_M:
@@ -1358,7 +1368,7 @@ def _query_osm_nearby_roads(lat0, lng0, cell, top_n=NEARBY_ROADS_COUNT):
         if not elements:
             continue  # nothing at this radius -- widen and try again
 
-        closest_by_name = {}  # name -> nearest distance_m seen for that name
+        closest_by_name = {}  # name -> (nearest distance_m, highway tag) seen for that name
         for way in elements:
             geometry = way.get("geometry") or []
             if not geometry:
@@ -1367,13 +1377,29 @@ def _query_osm_nearby_roads(lat0, lng0, cell, top_n=NEARBY_ROADS_COUNT):
             name = tags.get("name") or tags.get("ref")
             if not name:
                 continue
+            highway_tag = tags.get("highway", "")
             distance_m = _point_to_polyline_distance_m(lat0, lng0, geometry)
-            if name not in closest_by_name or distance_m < closest_by_name[name]:
-                closest_by_name[name] = distance_m
+            if name not in closest_by_name or distance_m < closest_by_name[name][0]:
+                closest_by_name[name] = (distance_m, highway_tag)
 
         if closest_by_name:
-            ranked = sorted(closest_by_name.items(), key=lambda kv: kv[1])[:top_n]
-            return [{"name": name, "distance_m": int(distance_m)} for name, distance_m in ranked]
+            ranked = sorted(closest_by_name.items(), key=lambda kv: kv[1][0])
+
+            nearest_major = next(
+                ((name, dist) for name, (dist, tag) in ranked if tag in MAJOR_ROAD_TAGS),
+                None,
+            )
+
+            top = ranked[:top_n]
+            result = [{"name": name, "distance_m": int(dist)} for name, (dist, _tag) in top]
+
+            if nearest_major and nearest_major[0] not in {r["name"] for r in result}:
+                if len(result) >= top_n:
+                    result = result[:top_n - 1]
+                result.append({"name": nearest_major[0], "distance_m": int(nearest_major[1])})
+                result.sort(key=lambda r: r["distance_m"])
+
+            return result
 
     return []
 
