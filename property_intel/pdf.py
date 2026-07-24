@@ -869,302 +869,363 @@ def _nearby_estate(cell):
 
 
 # ===========================================================================
-# NEW: Category-specific marketing sentence templates (12-15 words each)
+# THEMED PARAGRAPH POOLS (psychologically anchored, with amenity placeholders)
 # ===========================================================================
 
-# Each category has a list of templates using {name} and {dist} placeholders.
-# {dist} is the full distance phrase like "1.2 kilometers away" or "right in the area".
-# Templates are designed to sell the benefit of that amenity.
+# Each theme has a starter sentence and a list of amenity categories to mention.
+# The placeholders {amenities} will be replaced with a formatted list of
+# names and distances from those categories.
 
-CATEGORY_SENTENCE_TEMPLATES = {
-    "Schools": [
-        "{name} is {dist}, offering quality schooling for families.",
-        "With {name} {dist}, children enjoy a short trip to school.",
-        "The nearby {name} ({dist}) makes school runs quick and easy.",
-        "Parents will love {name} just {dist}, a great school close by.",
-        "Schooling is convenient with {name} only {dist} from home.",
-        "{name} {dist} means less time commuting and more family time.",
-        "A top school, {name}, is {dist}, ideal for growing families.",
-        "Families already send their children to {name}, only {dist}.",
-        "{name} is {dist}, one less logistics headache for parents.",
-        "The area's school runs are simple, with {name} just {dist}.",
-        "{name}, {dist}, gives young families a reason to put down roots here.",
-        "A confirmed school, {name}, sits {dist}, backing up the area's family appeal.",
-        "For anyone raising a family, {name} {dist} is a genuine, everyday convenience.",
-    ],
-    "Universities": [
-        "{name} {dist} provides higher education within easy reach.",
-        "University students benefit from {name} just {dist}.",
-        "{name} is {dist}, opening up tertiary education opportunities.",
-        "With {name} {dist}, campus life is always close at hand.",
-        "The university {name} is {dist}, perfect for students and staff.",
-        "Higher learning at {name} is accessible, only {dist} from here.",
-        "{name} {dist} makes attending lectures and events effortless.",
-        "Staff and students at {name} already commute from this area, {dist}.",
-        "{name}, {dist}, is exactly the kind of proximity student tenants look for.",
-        "A confirmed university, {name}, is {dist}, a strong signal for rental demand.",
-        "Lecturers and students alike value being {dist} from {name}.",
-        "With {name} just {dist}, campus commutes stop being a daily hassle.",
-    ],
-    "Hospitals": [
-        "Healthcare is close with {name} only {dist} from the property.",
-        "{name} {dist} ensures medical care is always within quick reach.",
-        "Residents appreciate {name} just {dist} for peace of mind.",
-        "The hospital {name} is {dist}, offering reliable healthcare access.",
-        "For medical emergencies, {name} is {dist}, reassuringly close.",
-        "{name} {dist} provides quality healthcare without the long drive.",
-        "With {name} {dist}, you're never far from medical services.",
-        "Neighbours already rely on {name}, {dist}, for their care.",
-        "A verified hospital, {name}, sits {dist}, real reassurance for any household.",
-        "{name}, {dist}, means a health scare never has to mean a long drive.",
-        "Having {name} {dist} is the kind of safety net most buyers look for.",
-    ],
-    "Pharmacies": [
-        "{name} is {dist}, keeping everyday medicine and check-ups close by.",
-        "With {name} {dist}, a prescription is never far away.",
-        "The nearby pharmacy {name} ({dist}) covers day-to-day health needs.",
-        "{name}, only {dist}, makes routine medication runs simple.",
-        "Residents can reach {name} in {dist}, no need to plan ahead.",
-        "A confirmed pharmacy, {name}, is {dist}, useful for the whole household.",
-        "{name} {dist} rounds out the area's everyday healthcare access.",
-    ],
-    "Banks": [
-        "Banking is easy with {name} only {dist} for your financial needs.",
-        "{name} {dist} puts everyday banking right on your doorstep.",
-        "Financial services at {name} are just {dist}, very convenient.",
-        "Manage your money with ease, {name} is {dist} from home.",
-        "{name} {dist} means shorter queues and simpler banking.",
-        "The nearest bank, {name}, is {dist}, saving you valuable time.",
-        "With {name} {dist}, you can handle banking errands in minutes.",
-        "{name}, {dist}, is the kind of established institution serious buyers check for.",
-        "A confirmed branch of {name} sits {dist}, real financial infrastructure nearby.",
-        "Households here already bank at {name}, only {dist}.",
-    ],
-    "Supermarkets": [
-        "Grocery shopping is a breeze with {name} only {dist}.",
-        "{name} {dist} ensures you can pick up fresh food quickly.",
-        "The supermarket {name} is {dist}, making daily shopping effortless.",
-        "For everyday needs, {name} is {dist}, incredibly handy.",
-        "With {name} {dist}, you'll never run out of essentials.",
-        "Shopping at {name} is convenient, it's just {dist} from here.",
-        "Stock up with ease, {name} is only {dist} for all your groceries.",
-        "Neighbours already do their weekly shop at {name}, {dist}.",
-        "{name}, {dist}, is a small but real daily-life advantage worth factoring in.",
-        "A confirmed supermarket, {name}, at {dist}, keeps errands short and simple.",
-    ],
-    "Gated Communities": [
-        "The established estate {name} is {dist}, offering secure living.",
-        "{name} {dist} provides a sought-after neighbourhood setting.",
-        "With {name} just {dist}, you benefit from a prestigious address.",
-        "The gated community {name} is {dist}, ensuring safety and comfort.",
-        "Residents of {name} enjoy a secure environment, only {dist}.",
-        "{name} {dist} adds to the area's desirability for homebuyers.",
-        "A peaceful estate, {name}, is {dist}, perfect for families.",
-        "The presence of {name}, {dist}, shows this area already attracts serious homeowners.",
-        "Buyers looking for company will find {name}, {dist}, already home to an established community.",
-        "{name}, {dist}, is proof this location has already passed other buyers' due diligence.",
-    ],
-    "Petrol Stations": [
-        "Fuel up quickly with {name} only {dist} for your vehicle.",
-        "{name} {dist} makes refuelling convenient and stress-free.",
-        "The petrol station {name} is {dist}, saving you time on the road.",
-        "With {name} {dist}, you'll never worry about running out of fuel.",
-        "Petrol is easily accessible, {name} is just {dist}.",
-        "Fill up at {name} {dist}, ideal for busy commuters.",
-        "{name} {dist} keeps your journeys moving without detours.",
-        "A confirmed fuel stop, {name}, is {dist}, useful for daily commuters.",
-    ],
-    "Police Stations": [
-        "Security is enhanced with {name} only {dist} from the property.",
-        "The police station {name} is {dist}, providing added peace of mind.",
-        "With {name} {dist}, law enforcement is always close at hand.",
-        "Residents feel safer knowing {name} is just {dist}.",
-        "A police station, {name}, is {dist}, ensuring quick response times.",
-        "Neighbourhood safety is a priority, {name} is only {dist} from here.",
-        "{name} {dist} adds an extra layer of security for your family.",
-        "A verified police post, {name}, sits {dist}, real reassurance for any household.",
-    ],
-    "Fire Stations": [
-        "Fire safety is covered with {name} only {dist} from the site.",
-        "The fire station {name} is {dist}, ensuring rapid emergency response.",
-        "With {name} {dist}, you're protected against fire hazards.",
-        "Emergency services are near, {name} is just {dist}.",
-        "A fire station, {name}, is {dist}, crucial for safety.",
-        "Residents benefit from {name} {dist}, reducing fire risk.",
-        "{name} {dist} means professional help is minutes away.",
-    ],
-    "EV Charging": [
-        "Electric vehicle owners will find {name} only {dist} for charging.",
-        "{name} {dist} makes owning an EV practical and convenient.",
-        "With {name} {dist}, you can charge your car without hassle.",
-        "The EV charging station {name} is {dist}, future-ready infrastructure.",
-        "Sustainable driving is easy, {name} is just {dist}.",
-        "Charge up at {name} {dist}, ideal for eco-conscious buyers.",
-        "{name} is only {dist}, useful reassurance for EV owners.",
-    ],
-    "Transit Stops": [
-        "{name} is {dist}, keeping the property connected without a car.",
-        "With {name} just {dist}, commuting without a car is realistic here.",
-        "The transit stop {name} ({dist}) links the property to the wider city.",
-        "{name}, only {dist}, is useful for staff, tenants, or visitors without a vehicle.",
-        "Public transport is close, {name} sits {dist} from the property.",
-        "A confirmed stop, {name}, at {dist}, adds genuine transport flexibility.",
-    ],
-    "Restaurants": [
-        "Dining out is easy with {name} only {dist} from home.",
-        "{name} {dist} offers a well-known option just a short walk away.",
-        "Enjoy a meal at {name}, it's {dist}, a nice option nearby.",
-        "The venue {name} is {dist}, adding to the local flavour.",
-        "With {name} {dist}, you can treat yourself without the drive.",
-        "A known name in the area, {name}, is {dist}.",
-        "{name} {dist} means a familiar meal spot is always close at hand.",
-    ],
-    # Fallback for any unknown category
-    "default": [
-        "{name} is {dist}, adding convenience to your daily life.",
-        "With {name} {dist}, you have essential services within reach.",
-        "{name} is only {dist}, a practical benefit for residents.",
-        "The nearby {name} ({dist}) makes everything more accessible.",
-    ]
+# Mapping from theme name to (starter_list, categories_to_mention)
+_THEME_DEFINITIONS = {
+    "location": {
+        "starters": [
+            "Ideally positioned for both convenience and future growth.",
+            "Perfectly located to balance accessibility with everyday comfort.",
+            "Situated in one of the area's most practical and well-connected locations.",
+            "Positioned where convenience meets long-term opportunity.",
+            "Enjoying a location that continues to attract homeowners and investors alike.",
+            "Set within a location known for its accessibility and growing appeal.",
+            "Occupying a strategic position that places everything within easy reach.",
+            "Found in a location where everyday convenience comes naturally.",
+            "Placed in an area that continues to grow in both value and demand.",
+            "Located where established infrastructure meets future opportunity.",
+            "This location offers the rare combination of convenience, accessibility, and long-term potential.",
+            "Well positioned to benefit from both today's convenience and tomorrow's growth.",
+            "This is a location that continues to attract people looking for lasting value.",
+            "Surrounded by established infrastructure, the property enjoys a location built for long-term appeal.",
+        ],
+        "categories": ["Roads", "Transit Stops"],  # we'll handle roads separately
+    },
+    "lifestyle": {
+        "starters": [
+            "Everything needed for comfortable daily living is already close at hand.",
+            "The surrounding neighbourhood makes everyday life remarkably convenient.",
+            "Residents enjoy easy access to the services they rely on every day.",
+            "Daily errands become quicker and simpler thanks to the area's established amenities.",
+            "The location is designed around convenience, allowing more time for what matters.",
+            "Living here means spending less time travelling and more time enjoying your day.",
+            "Everyday essentials are already part of the surrounding neighbourhood.",
+            "The area supports a practical and comfortable lifestyle for families and professionals alike.",
+            "Modern living becomes effortless with essential services already nearby.",
+            "The surrounding infrastructure makes daily life both convenient and enjoyable.",
+            "The neighbourhood already provides the everyday conveniences buyers value most.",
+            "Comfort and convenience come naturally in a location like this.",
+        ],
+        "categories": ["Supermarkets", "Banks", "Hospitals", "Pharmacies", "Petrol Stations", "Shopping"],
+    },
+    "community": {
+        "starters": [
+            "The surrounding neighbourhood reflects years of steady residential and commercial growth.",
+            "Established homes and businesses demonstrate the area's continued popularity.",
+            "The presence of long-standing developments reinforces confidence in the location.",
+            "This is a neighbourhood where people have already chosen to live, work, and invest.",
+            "The area's continued development reflects growing confidence from both residents and businesses.",
+            "Surrounding developments demonstrate a mature and well-established community.",
+            "The neighbourhood continues to attract investment thanks to its proven appeal.",
+            "Existing developments provide reassurance that the location is already well established.",
+            "A thriving community has already taken shape around this location.",
+            "The area's established character provides confidence for future buyers.",
+            "Successful neighbouring developments highlight the area's long-term attractiveness.",
+            "The surrounding environment reflects a location that continues to grow in demand.",
+        ],
+        "categories": ["Gated Communities", "Student Housing", "Parks"],
+    },
+    "connectivity": {
+        "starters": [
+            "Excellent connectivity makes travelling around the area simple and convenient.",
+            "The surrounding road network provides smooth access to nearby destinations.",
+            "Well-established transport links make daily commuting effortless.",
+            "Whether travelling for work or leisure, the location keeps you well connected.",
+            "The property's accessibility adds lasting value for both residents and businesses.",
+            "Convenient road access makes this location easy to reach throughout the day.",
+            "Strong transport connections support both residential and commercial activities.",
+            "Excellent accessibility allows buyers to enjoy greater flexibility every day.",
+            "The property's location reduces travel time while increasing convenience.",
+            "Connectivity is one of the strongest advantages this location has to offer.",
+        ],
+        "categories": ["Roads", "Transit Stops", "Petrol Stations"],
+    },
+    "development": {
+        "starters": [
+            "The property's location supports a wide range of future development opportunities.",
+            "Its combination of accessibility and surrounding infrastructure provides exceptional flexibility.",
+            "Whether planned for residential or commercial use, the location is well prepared for future development.",
+            "The surrounding environment supports a variety of successful development possibilities.",
+            "The property's characteristics provide flexibility for different investment strategies.",
+            "The site is equally suited to personal use or larger development plans.",
+            "The location allows buyers to adapt their plans as future opportunities emerge.",
+            "Its strong fundamentals support both immediate development and long-term holding.",
+            "The property's versatility makes it attractive to a broad range of buyers.",
+            "This is a location capable of supporting multiple successful development outcomes.",
+        ],
+        "categories": [],  # no specific amenities for this theme
+    },
+    "investment": {
+        "starters": [
+            "Strong supporting infrastructure provides confidence for long-term investment.",
+            "The surrounding developments demonstrate the area's continued growth and stability.",
+            "The property's location is supported by infrastructure that encourages long-term value.",
+            "Existing investment within the neighbourhood reinforces confidence in the area's future.",
+            "The area's continued expansion creates favourable conditions for long-term appreciation.",
+            "Established infrastructure helps reduce development uncertainty.",
+            "Growing demand continues to strengthen the area's investment appeal.",
+            "The surrounding environment provides the foundations buyers look for in long-term investments.",
+            "The property's location combines present-day convenience with future investment potential.",
+            "This is the kind of location that continues to reward patient investors.",
+            "Its established surroundings help protect long-term property value.",
+            "The area's proven growth makes it an attractive place to invest with confidence.",
+        ],
+        "categories": ["Banks", "Commercial", "Supermarkets"],
+    },
+    "rental": {
+        "starters": [
+            "The surrounding institutions continue to support healthy rental demand.",
+            "The area's existing activity creates favourable conditions for long-term rental occupancy.",
+            "Nearby employers, businesses, and institutions help sustain demand for housing.",
+            "The location offers excellent potential for income-generating residential developments.",
+            "Consistent activity within the neighbourhood supports future rental opportunities.",
+            "The property's accessibility makes it attractive to a wide range of tenants.",
+            "Strong local demand creates favourable conditions for rental investment.",
+            "The surrounding community provides a reliable foundation for long-term occupancy.",
+        ],
+        "categories": ["Universities", "Schools", "Hospitals", "Employers"],
+    },
+    "scarcity": {
+        "starters": [
+            "Well-located properties within established neighbourhoods continue to attract strong buyer interest.",
+            "Opportunities in well-connected locations like this are becoming increasingly sought after.",
+            "Properties combining accessibility with established infrastructure remain highly desirable.",
+            "Locations offering this level of convenience continue to experience sustained demand.",
+            "The combination of location and infrastructure is becoming increasingly difficult to secure.",
+            "As surrounding development continues, well-positioned properties become even more valuable.",
+            "Established locations like this continue to outperform emerging areas in buyer demand.",
+            "The area's continued growth highlights the importance of securing opportunities early.",
+        ],
+        "categories": [],
+    },
+    "closing": {
+        "starters": [
+            "Altogether, the property's location, accessibility, and surrounding infrastructure create an opportunity that is both practical today and valuable for the future.",
+            "Whether purchasing to build, invest, or develop, this property offers a strong foundation for long-term success.",
+            "The combination of convenience, established infrastructure, and future potential makes this an opportunity worth serious consideration.",
+            "This property brings together the qualities buyers value most in a well-positioned investment.",
+            "Its strategic location and established surroundings make it an attractive choice for both homeowners and investors.",
+            "With strong fundamentals already in place, the property is well positioned for long-term growth.",
+            "The surrounding environment provides confidence that this location will continue to attract demand well into the future.",
+            "For buyers seeking both lifestyle and investment potential, this property delivers a compelling combination of advantages.",
+            "Properties offering this balance of convenience, accessibility, and future potential remain among the market's most desirable opportunities.",
+            "This is more than a well-located property. It is a location positioned to continue creating value for years to come.",
+        ],
+        "categories": [],  # no amenities, pure summary
+    },
 }
 
-
-def _get_category_sentence(category, name, distance_m, rng):
-    """Return a marketing sentence for a given category, using its templates."""
-    templates = CATEGORY_SENTENCE_TEMPLATES.get(category)
-    if not templates:
-        templates = CATEGORY_SENTENCE_TEMPLATES["default"]
-    dist_phrase = _format_distance_away(distance_m)
-    template = rng.choice(templates)
-    # Ensure sentence is 12-15 words; we trust our templates.
-    sentence = template.format(name=escape(name), dist=dist_phrase)
-    # Ensure it ends with a period.
-    if not sentence.endswith("."):
-        sentence += "."
-    return sentence
+# The order in which themes will appear in the description.
+_THEME_ORDER = ["location", "lifestyle", "community", "connectivity", "development", "investment", "rental", "scarcity", "closing"]
 
 
-# ===========================================================================
-# OPENING SENTENCE POOLS -- distance, frontage, and closing are always
-# built as separate, self-contained sentences (never glued together with
-# "and"), which is what previously caused dangling-modifier sentences
-# like "...which works out to a 7-minute drive from Ruiru Town and
-# enjoying frontage on C65, this property offers...".
-# ===========================================================================
+def _pick_primary_theme(cell, evidence_points):
+    """Determine the strongest theme based on available evidence.
+    Returns a theme key from _THEME_DEFINITIONS.
+    """
+    # Build a set of categories present in evidence_points
+    categories_present = {label for label, _, _ in evidence_points}
 
-def _generate_openers():
-    intro_verbs = [
-        "Located", "Situated", "Positioned", "Set", "Found", "Sited", "Nestled",
-    ]
+    # Check for key indicators
+    has_schools = "Schools" in categories_present
+    has_hospitals = "Hospitals" in categories_present
+    has_universities = "Universities" in categories_present
+    has_banks = "Banks" in categories_present
+    has_supermarkets = "Supermarkets" in categories_present or "Shopping" in categories_present
+    has_petrol = "Petrol Stations" in categories_present
+    has_gated = "Gated Communities" in categories_present
+    has_transit = "Transit Stops" in categories_present
 
-    town_with_drive = []
-    for verb in intro_verbs:
-        for phrasing in [
-            "{verb} just {{dist_m}} metres from {{town}}, roughly {{drive_phrase}}",
-            "{verb} {{dist_m}} metres from {{town}}, about {{drive_phrase}}",
-            "{verb} only {{dist_m}} metres from {{town}}, which works out to {{drive_phrase}}",
-            "{verb} a mere {{dist_m}} metres from {{town}}, around {{drive_phrase}}",
-            "{verb} {{dist_away}} from {{town}}, roughly {{drive_phrase}}",
-            "{verb} {{dist_away}} from {{town}}, which is about {{drive_phrase}}",
-        ]:
-            town_with_drive.append(phrasing.format(verb=verb) + ".")
+    # Family Living: schools + hospitals
+    if has_schools and has_hospitals:
+        return "lifestyle"  # we can use lifestyle as it covers family needs, but we might create a separate "family" theme later
 
-    town_without_drive = []
-    for verb in intro_verbs:
-        for phrasing in [
-            "{verb} {{dist_m}} metres from {{town}}",
-            "{verb} just {{dist_m}} metres from {{town}}",
-            "{verb} {{dist_away}} from {{town}}",
-            "{verb} {{dist_away}} from the heart of {{town}}",
-        ]:
-            town_without_drive.append(phrasing.format(verb=verb) + ".")
+    # Commercial Hub: banks + petrol + shopping
+    if has_banks and has_petrol and has_supermarkets:
+        return "investment"  # or "connectivity"
 
-    fallback = [
-        "{location_line} offers strong development potential for residential or commercial use.",
-        "{location_line} presents an accessible opportunity for residential or commercial development.",
-        "{location_line} is a prime candidate for residential or commercial development.",
-        "{location_line} enjoys a strategic location with strong development upside.",
-        "{location_line} is conveniently located for residential or commercial purposes.",
-    ]
+    # Investment Opportunity: universities + rental demand proxies
+    if has_universities:
+        return "rental"
 
-    return {
-        "town_with_drive": town_with_drive,
-        "town_without_drive": town_without_drive,
-        "fallback": fallback,
-    }
+    # Peaceful Residential: gated communities and parks
+    if has_gated:
+        return "community"
+
+    # Urban Convenience: mix of many categories
+    if len(categories_present) >= 3:
+        return "location"
+
+    # Future Growth: check benchmark yoy
+    _, benchmark = _match_price_benchmark(cell)
+    if benchmark and benchmark.get("yoy_change_pct", 0) > 5:
+        return "investment"
+
+    # Default
+    return "location"
 
 
-_OPENER_POOLS = _generate_openers()
+def _format_amenity_list(amenity_entries):
+    """Given a list of (name, distance_m) tuples, return a string like
+    "Carrefour (1.2 kilometers away), KCB Bank (800 meters away)".
+    """
+    if not amenity_entries:
+        return ""
+    parts = []
+    for name, dist in amenity_entries:
+        if dist is not None:
+            parts.append(f"{name} ({_format_distance_away(dist)})")
+        else:
+            parts.append(name)
+    if len(parts) == 1:
+        return parts[0]
+    return ", ".join(parts[:-1]) + ", and " + parts[-1]
 
-# Always its own sentence -- never appended to the distance clause with "and".
-_FRONTAGE_SENTENCES = [
-    "The property fronts {frontage}.",
-    "It enjoys direct frontage on {frontage}.",
-    "The plot has frontage onto {frontage}.",
-    "It sits with frontage on {frontage}.",
-    "Direct frontage on {frontage} is confirmed for this plot.",
-    "This plot fronts directly onto {frontage}.",
-]
 
-_OPENER_END_SENTENCES = [
-    "This property offers excellent accessibility for residential or commercial development.",
-    "This property offers outstanding accessibility for residential or commercial development.",
-    "This property presents an accessible opportunity for residential or commercial development.",
-    "This property combines convenience with strong development potential.",
-    "This property enjoys a highly accessible location suitable for residential or commercial development.",
-    "This property is strategically positioned for residential or commercial development.",
-    "This property offers a practical, well-connected setting for residential or commercial development.",
-    "This property delivers excellent accessibility for residential or commercial development.",
-    "This property provides exceptional connectivity for residential or commercial use.",
-    "This property is ideally placed for residential or commercial development.",
-    "This property affords strong accessibility for a range of residential or commercial uses.",
-    "This property gives buyers a genuinely well-connected base for residential or commercial plans.",
-    "This property's location already does much of the work for a future residential or commercial build.",
-]
+def _gather_amenities_for_theme(cell, theme_key, evidence_points, frontage_name, major_road_name):
+    """Return a string of amenities relevant to the theme, with distances.
+    Also handles special cases like roads.
+    """
+    if theme_key not in _THEME_DEFINITIONS:
+        return ""
+    categories = _THEME_DEFINITIONS[theme_key]["categories"]
+    if not categories:
+        return ""
 
-# Services templates -- many variations
-_SERVICES_TEMPLATES = [
-    "Nearby amenities include {svc_list}, placing {nouns} within a short walk.",
-    "Within walking distance are {svc_list}, ensuring {nouns} are all close by.",
-    "Essential services within reach include {svc_list}, placing {nouns} within easy walking distance.",
-    "{svc_list_cap} are all close at hand, putting {nouns} within a short walk.",
-    "Nearby services include {svc_list}, putting {nouns} within comfortable walking distance.",
-    "Healthcare, education, banking, and other essential services are all close by, including {svc_list}.",
-    "The immediate surroundings include {svc_list}, bringing {nouns} within easy reach.",
-    "A range of services, including {svc_list}, are just a short walk away, ensuring {nouns} are conveniently close.",
-    "With {svc_list} nearby, {nouns} are always within easy reach.",
-    "The area boasts {svc_list}, making {nouns} exceptionally accessible.",
-    "Key amenities such as {svc_list} are situated close by, offering {nouns} at your doorstep.",
-    "Residents will appreciate the proximity of {svc_list}, providing {nouns} within a stone's throw.",
-    "Everyday needs are well catered for with {svc_list} just moments away, covering {nouns}.",
-    "The locale is well‑served by {svc_list}, ensuring {nouns} are never far.",
-    "From {svc_list}, you have all the essentials for {nouns} right on your doorstep.",
-    "With {svc_list} in the vicinity, {nouns} are effortlessly accessible.",
-    "The property benefits from nearby {svc_list}, placing {nouns} within a comfortable stroll.",
-]
+    # Get all amenity fields
+    amenity_fields = dict(_discover_amenity_fields(cell))
+    # Also we may have evidence_points for quick lookup, but we'll fetch fresh.
 
-# NEW: Short service sentences (12-15 words) -- used alongside the longer ones.
-_SHORT_SERVICES = [
-    "Nearby services include {svc_list}.",
-    "Within walking distance are {svc_list}.",
-    "Essential amenities close by are {svc_list}.",
-    "The area offers {svc_list} within easy reach.",
-    "You will find {svc_list} just a short walk away.",
-    "A range of services is available, including {svc_list}.",
-    "The immediate vicinity features {svc_list}.",
-    "Key amenities such as {svc_list} are close at hand.",
-    "Residents benefit from {svc_list} in the neighbourhood.",
-    "Everyday needs are catered for by {svc_list}.",
-]
-_SERVICES_TEMPLATES = _SHORT_SERVICES + _SERVICES_TEMPLATES
+    # Build a list of (name, dist) for each category.
+    items = []
+    for cat in categories:
+        if cat == "Roads":
+            # Include frontage and major road if available
+            if frontage_name:
+                # we don't have distance for frontage from evidence, but we have it elsewhere
+                # We'll get distance from frontage_dist if available, but we don't have it here.
+                # We'll handle roads separately.
+                pass
+            if major_road_name:
+                # major_road_dist is available but not passed.
+                pass
+            continue  # skip roads for now, we handle them specially
 
-# Short estate sentences (kept)
-_SHORT_CLOSING_ESTATE = [
-    "The area is anchored by {estate}.",
-    "The neighbourhood is built around {estate}.",
-    "The location benefits from {estate}.",
-    "An established estate, {estate}, is nearby.",
-]
+        # Get entries for this category
+        entries = amenity_fields.get(cat, [])
+        # Take the nearest 2
+        sorted_entries = sorted(entries, key=lambda e: e.get("distance_m", float("inf")))
+        for e in sorted_entries[:2]:
+            name = e.get("name")
+            dist = e.get("distance_m")
+            if name and dist is not None:
+                items.append((name, dist))
+                break  # only one per category, or we can take up to 2
+
+    # If we have roads, add them.
+    road_parts = []
+    if frontage_name:
+        # We need distance. We might get from cell.nearest_road_distance_m or from nearby_roads.
+        # We'll fetch from cell.nearest_road_distance_m if available.
+        frontage_dist = getattr(cell, "nearest_road_distance_m", None)
+        if frontage_dist is not None:
+            road_parts.append(f"{frontage_name} ({_format_distance_away(frontage_dist)})")
+        else:
+            road_parts.append(frontage_name)
+    if major_road_name:
+        # major_road_dist is not passed; we can get from cell.nearby_roads? We'll just get from nearby_roads.
+        for road in getattr(cell, "nearby_roads", []) or []:
+            if _local_road_name(road.get("name")) == major_road_name:
+                major_dist = road.get("distance_m")
+                if major_dist is not None:
+                    road_parts.append(f"{major_road_name} ({_format_distance_away(major_dist)})")
+                else:
+                    road_parts.append(major_road_name)
+                break
+    # If we have road parts, prepend them to items
+    if road_parts:
+        # We'll add roads as a separate category-like item
+        # Combine with existing items
+        items = [(part, None) for part in road_parts] + items  # but we need to format differently
+
+    # Now format items into a string
+    if not items:
+        return ""
+
+    # Separate roads from others for nicer phrasing
+    road_items = [item for item in items if isinstance(item[0], str) and "(" not in item[0]]  # simple heuristic
+    other_items = [item for item in items if item not in road_items]
+
+    # Build phrases
+    parts = []
+    if road_items:
+        # road_items are (name, None) or (name_with_dist, None)
+        # We'll just join them
+        road_str = ", ".join(road_items[0][0] for road_items)  # simplified
+        # Actually we want to format properly
+    # Simpler: just format all items as name (distance) if distance exists, else name.
+    formatted_parts = []
+    for name, dist in items:
+        if dist is not None:
+            formatted_parts.append(f"{name} ({_format_distance_away(dist)})")
+        else:
+            formatted_parts.append(name)
+    if not formatted_parts:
+        return ""
+    return ", ".join(formatted_parts)
+
+
+def _generate_themed_description(cell, evidence_points, frontage_name, major_road_name, rng):
+    """Generate a description using themed paragraphs. Returns a list of sentences (each a complete paragraph)."""
+    # Determine primary theme
+    primary_theme = _pick_primary_theme(cell, evidence_points)
+    # We'll still include all themes, but maybe adjust emphasis? For now, we include all.
+
+    sentences = []
+    # For each theme in order, pick a starter and add amenities.
+    for theme_key in _THEME_ORDER:
+        if theme_key not in _THEME_DEFINITIONS:
+            continue
+        starter_list = _THEME_DEFINITIONS[theme_key]["starters"]
+        if not starter_list:
+            continue
+        starter = rng.choice(starter_list)
+
+        # Gather amenities for this theme
+        amenity_str = _gather_amenities_for_theme(cell, theme_key, evidence_points, frontage_name, major_road_name)
+
+        # Build the final sentence: starter + amenity_str if present
+        if amenity_str:
+            # We need to ensure smooth flow. For closing and scarcity, we might not want to add amenities.
+            if theme_key in ["closing", "scarcity"]:
+                sentence = starter  # no amenities
+            else:
+                # If starter already ends with a period, we add a space and then a list.
+                # To make it read naturally, we can do: "Starter. Amenities: ..."
+                # Or we can embed: "Starter, with amenities like ..."
+                # We'll do: starter + " " + amenity_str + "."
+                # But amenity_str may already contain periods? No, it's a list.
+                # We'll construct: "Starter Nearby amenities include " + amenity_str + "."
+                if "nearby" in starter.lower() or "close" in starter.lower():
+                    sentence = starter + " " + amenity_str + "."
+                else:
+                    sentence = starter + " Nearby amenities include " + amenity_str + "."
+        else:
+            sentence = starter
+
+        # Ensure it ends with a period.
+        if not sentence.endswith("."):
+            sentence += "."
+        sentences.append(sentence)
+
+    return sentences
+
 
 def _service_connector_phrase(dist_m, rng):
     """Picks a colloquial distance qualifier consistent with the actual
@@ -1513,118 +1574,68 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
                              evidence_points, estate, named_density,
                              location_line=None, seed=None, cell=None):
     """
-    Builds the Listing Description as separate, self-contained sentences:
-    distance, frontage (own sentence -- never glued to the distance
-    clause), a closing accessibility line, a general services summary
-    (top 4 nearest evidence points), category-specific sentences ONLY for
-    evidence points beyond those top 4 (so nothing is cited twice), an
-    estate sentence, a service-density sentence, and -- when `cell` is
-    passed -- up to two "combined intelligence" synthesis sentences plus
-    any of the previously-unused price benchmark / air quality / flat-site
-    sentences that have real data behind them.
-
-    The estate's own name is excluded from the evidence points used here
-    so it isn't named in the services summary AND in its own estate
-    sentence.
+    Builds the Listing Description using psychologically anchored themed
+    paragraphs. Each paragraph focuses on a single theme (Location, Lifestyle,
+    Community, Connectivity, Development, Investment, Rental, Scarcity,
+    Closing) and includes 2-4 specific amenities with distances as proof.
+    The primary theme is automatically selected based on the strongest
+    evidence present (schools/hospitals → Family Living; banks/commercial →
+    Commercial Hub; universities → Investment Opportunity; etc.).
     """
     rng = random.Random(seed) if seed is not None else random
 
-    if estate:
-        evidence_points = [p for p in evidence_points if p[1] != estate[0]]
-
-    minutes = nearest_town[1] if nearest_town else None
-    km = nearest_town[2] if nearest_town else None
-    dist_m = int(round(km * 1000)) if km is not None else None
-    drive_phrase = _format_drive_phrase(minutes)
-    dist_away = _format_distance_away(dist_m) if dist_m is not None else "unknown distance"
+    # Get major road info for connectivity theme
+    major_road_name = None
+    nearby_roads = getattr(cell, "nearby_roads", None) or []
     frontage_short = frontage_name.split(",")[0] if frontage_name else None
-
-    # ---- 1. Distance sentence ----
-    if town_label and dist_m is not None:
-        pool = _OPENER_POOLS["town_with_drive"] if drive_phrase else _OPENER_POOLS["town_without_drive"]
-        distance_sentence = rng.choice(pool).format(
-            dist_m=dist_m,
-            drive_phrase=drive_phrase or "",
-            town=str(escape(town_label)),
-            dist_away=dist_away,
-        )
-    else:
-        distance_sentence = rng.choice(_OPENER_POOLS["fallback"]).format(
-            location_line=str(escape(location_line)) if location_line else "This property",
-        )
-    sentences = [distance_sentence]
-
-    # ---- 2. Frontage -- its own sentence, never glued to the distance clause ----
-    if frontage_short:
-        sentences.append(rng.choice(_FRONTAGE_SENTENCES).format(frontage=str(escape(frontage_short))))
-
-    # ---- 3. Closing accessibility line ----
-    sentences.append(rng.choice(_OPENER_END_SENTENCES))
-
-    # ---- 4. General services summary (top 4 nearest evidence points) ----
-    top4 = evidence_points[:4]
-    svc_list, noun_phrase = _format_service_list(top4, rng)
-    if svc_list:
-        services_template = rng.choice(_SERVICES_TEMPLATES)
-        svc_sentence = services_template.format(
-            svc_list=svc_list,
-            svc_list_cap=svc_list[0].upper() + svc_list[1:] if svc_list else "",
-            nouns=noun_phrase,
-        )
-        if not svc_sentence.endswith("."):
-            svc_sentence += "."
-        sentences.append(svc_sentence)
-
-    # ---- 5. Category-specific sentences -- ONLY for points beyond the
-    # top 4 already named above, so nothing is cited twice ----
-    for label, name, dist in evidence_points[4:6]:
-        if label == "Gated Communities":
+    for road in nearby_roads:
+        candidate = _local_road_name(road.get("name"))
+        if not candidate or _road_tier(candidate) != "major":
             continue
-        sentences.append(_get_category_sentence(label, name, dist, rng))
+        if frontage_short and candidate == frontage_short:
+            continue
+        major_road_name = candidate
+        break
 
-    # ---- 6. Estate sentence ----
-    if estate:
-        name, dist = estate
-        estate_text = f"{escape(name)} {_format_distance_away(dist)}"
-        estate_sentence = rng.choice(_SHORT_CLOSING_ESTATE).format(estate=estate_text)
-        if not estate_sentence.endswith("."):
-            estate_sentence += "."
-        sentences.append(estate_sentence)
+    # Generate themed paragraphs
+    themed_sentences = _generate_themed_description(cell, evidence_points, frontage_name, major_road_name, rng)
 
-    # ---- 7. Named financial/retail density sentence ----
-    density_sentence = _format_named_density_sentence(named_density)
-    if density_sentence:
-        sentences.append(density_sentence)
+    # Optionally, we can also add some of the previously used "combined intelligence" sentences
+    # and other data sentences (price benchmark, air quality, etc.) at the end.
+    extra_sentences = []
 
-    if cell is not None:
-        # ---- 8. Combined intelligence -- synthesis across 2+ real data points ----
-        sentences.extend(_combined_intelligence_sentences(cell, evidence_points, estate, frontage_name, rng))
+    # Add combined intelligence sentences (if any)
+    extra_sentences.extend(_combined_intelligence_sentences(cell, evidence_points, estate, frontage_name, rng))
 
-        # ---- 9. Previously-fetched-but-unused data, restored ----
-        price_sentence = _price_benchmark_sentence(cell, rng)
-        if price_sentence:
-            sentences.append(price_sentence)
+    # Add price benchmark if available
+    price_sentence = _price_benchmark_sentence(cell, rng)
+    if price_sentence:
+        extra_sentences.append(price_sentence)
 
-        flat_sentence = _flat_site_sentence(cell, rng)
-        if flat_sentence:
-            sentences.append(flat_sentence)
+    # Add flat site sentence
+    flat_sentence = _flat_site_sentence(cell, rng)
+    if flat_sentence:
+        extra_sentences.append(flat_sentence)
 
-        soil_sentence = _soil_climate_sentence(cell, rng)
-        if soil_sentence:
-            sentences.append(soil_sentence)
+    # Add soil/climate sentence
+    soil_sentence = _soil_climate_sentence(cell, rng)
+    if soil_sentence:
+        extra_sentences.append(soil_sentence)
 
-        air_sentence = _air_quality_sentence(cell, rng)
-        if air_sentence:
-            sentences.append(air_sentence)
+    # Add air quality sentence
+    air_sentence = _air_quality_sentence(cell, rng)
+    if air_sentence:
+        extra_sentences.append(air_sentence)
 
-    if not sentences:
+    # Combine all sentences into a single paragraph (we join with spaces)
+    all_sentences = themed_sentences + extra_sentences
+    if not all_sentences:
         fallback = escape(location_line) if location_line else "This property"
         return Markup(f"{fallback}. Not enough verified data was available to write a description for this pin.")
 
-    # Every sentence already ends with "." -- join with a single space,
-    # never ". ", which was producing ".." throughout the paragraph.
-    sentences = [s if s.endswith(".") else s + "." for s in sentences]
-    paragraph = " ".join(sentences)
+    # Ensure each sentence ends with a period and join with a space.
+    cleaned = [s if s.endswith(".") else s + "." for s in all_sentences]
+    paragraph = " ".join(cleaned)
     return Markup(paragraph)
 
 
