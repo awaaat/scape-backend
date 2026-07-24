@@ -309,3 +309,14 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
 }
+
+# Emails that skip fingerprinting/fraud scoring/payment entirely and get
+# unlimited free reports. Comma-separated in env; falls back to a default
+# so this doesn't silently disappear if the env var is unset.
+ADMIN_BYPASS_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get(
+        "ADMIN_BYPASS_EMAILS", "writers.smith112@gmail.com"
+    ).split(",")
+    if e.strip()
+}
