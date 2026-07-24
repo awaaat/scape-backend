@@ -194,6 +194,18 @@ class PinSubmitView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         data = serializer.validated_data
 
+        if data["email"].strip().lower() in settings.ADMIN_BYPASS_EMAILS:
+            bypass_ip = _client_ip(request)
+            bypass_fingerprint = self._resolve_fingerprint(data["fingerprint_hash"], bypass_ip)
+            broker = self._resolve_broker(request, data["email"], bypass_fingerprint, bypass_ip)
+            try:
+                pin, cell = create_pin(data["raw_input"], broker=broker)
+            except LocationParseError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            report = PropertyReport.objects.create(pin=pin, status="pending", is_free_tier=True)
+            threading.Thread(target=generate_report_task, args=(str(report.id),), daemon=True).start()
+            return Response(PropertyReportSerializer(report).data, status=status.HTTP_201_CREATED)
+
         ip = _client_ip(request)
         fingerprint = self._resolve_fingerprint(data["fingerprint_hash"], ip)
 
