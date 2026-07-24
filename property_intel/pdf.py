@@ -1509,11 +1509,204 @@ def _combined_intelligence_sentences(cell, evidence_points, estate, frontage_nam
     return candidates[:max_sentences]
 
 
+def _build_description_html(town_label, nearest_town, frontage_name, frontage_dist,
+                             evidence_points, estate, named_density,
+                             location_line=None, seed=None, cell=None):
+    """
+    Builds the Listing Description as separate, self-contained sentences:
+    distance, frontage (own sentence -- never glued to the distance
+    clause), a closing accessibility line, a general services summary
+    (top 4 nearest evidence points), category-specific sentences ONLY for
+    evidence points beyond those top 4 (so nothing is cited twice), an
+    estate sentence, a service-density sentence, and -- when `cell` is
+    passed -- up to two "combined intelligence" synthesis sentences plus
+    any of the previously-unused price benchmark / air quality / flat-site
+    sentences that have real data behind them.
+
+    The estate's own name is excluded from the evidence points used here
+    so it isn't named in the services summary AND in its own estate
+    sentence.
+    """
+    rng = random.Random(seed) if seed is not None else random
+
+    if estate:
+        evidence_points = [p for p in evidence_points if p[1] != estate[0]]
+
+    minutes = nearest_town[1] if nearest_town else None
+    km = nearest_town[2] if nearest_town else None
+    dist_m = int(round(km * 1000)) if km is not None else None
+    drive_phrase = _format_drive_phrase(minutes)
+    dist_away = _format_distance_away(dist_m) if dist_m is not None else "unknown distance"
+    frontage_short = frontage_name.split(",")[0] if frontage_name else None
+
+    # ---- 1. Distance sentence ----
+    if town_label and dist_m is not None:
+        pool = _OPENER_POOLS["town_with_drive"] if drive_phrase else _OPENER_POOLS["town_without_drive"]
+        distance_sentence = rng.choice(pool).format(
+            dist_m=dist_m,
+            drive_phrase=drive_phrase or "",
+            town=str(escape(town_label)),
+            dist_away=dist_away,
+        )
+    else:
+        distance_sentence = rng.choice(_OPENER_POOLS["fallback"]).format(
+            location_line=str(escape(location_line)) if location_line else "This property",
+        )
+    sentences = [distance_sentence]
+
+    # ---- 2. Frontage -- its own sentence, never glued to the distance clause ----
+    if frontage_short:
+        sentences.append(rng.choice(_FRONTAGE_SENTENCES).format(frontage=str(escape(frontage_short))))
+
+    # ---- 3. Closing accessibility line ----
+    sentences.append(rng.choice(_OPENER_END_SENTENCES))
+
+    # ---- 4. General services summary (top 4 nearest evidence points) ----
+    top4 = evidence_points[:4]
+    svc_list, noun_phrase = _format_service_list(top4, rng)
+    if svc_list:
+        services_template = rng.choice(_SERVICES_TEMPLATES)
+        svc_sentence = services_template.format(
+            svc_list=svc_list,
+            svc_list_cap=svc_list[0].upper() + svc_list[1:] if svc_list else "",
+            nouns=noun_phrase,
+        )
+        if not svc_sentence.endswith("."):
+            svc_sentence += "."
+        sentences.append(svc_sentence)
+
+    # ---- 5. Category-specific sentences -- ONLY for points beyond the
+    # top 4 already named above, so nothing is cited twice ----
+    for label, name, dist in evidence_points[4:6]:
+        if label == "Gated Communities":
+            continue
+        sentences.append(_get_category_sentence(label, name, dist, rng))
+
+    # ---- 6. Estate sentence ----
+    if estate:
+        name, dist = estate
+        estate_text = f"{escape(name)} {_format_distance_away(dist)}"
+        estate_sentence = rng.choice(_SHORT_CLOSING_ESTATE).format(estate=estate_text)
+        if not estate_sentence.endswith("."):
+            estate_sentence += "."
+        sentences.append(estate_sentence)
+
+    # ---- 7. Named financial/retail density sentence ----
+    density_sentence = _format_named_density_sentence(named_density)
+    if density_sentence:
+        sentences.append(density_sentence)
+
+    # ---- 8. Combined intelligence and extra data (unchanged) ----
+    if cell is not None:
+        # ---- 8a. Combined intelligence -- synthesis across 2+ real data points ----
+        sentences.extend(_combined_intelligence_sentences(cell, evidence_points, estate, frontage_name, rng))
+
+        # ---- 8b. Previously-fetched-but-unused data, restored ----
+        price_sentence = _price_benchmark_sentence(cell, rng)
+        if price_sentence:
+            sentences.append(price_sentence)
+
+        flat_sentence = _flat_site_sentence(cell, rng)
+        if flat_sentence:
+            sentences.append(flat_sentence)
+
+        soil_sentence = _soil_climate_sentence(cell, rng)
+        if soil_sentence:
+            sentences.append(soil_sentence)
+
+        air_sentence = _air_quality_sentence(cell, rng)
+        if air_sentence:
+            sentences.append(air_sentence)
+
+    # ======================================================================
+    # NEW: Append GPT's theme-based paragraphs (exactly as suggested)
+    # These are built from the evidence and added after all existing sentences.
+    # ======================================================================
+    theme_paragraphs = _build_theme_paragraphs(town_label, nearest_town, frontage_name,
+                                                frontage_dist, evidence_points, estate,
+                                                named_density, location_line, seed, cell)
+    if theme_paragraphs:
+        sentences.extend(theme_paragraphs)
+
+    # ---- Final assembly ----
+    if not sentences:
+        fallback = escape(location_line) if location_line else "This property"
+        return Markup(f"{fallback}. Not enough verified data was available to write a description for this pin.")
+
+    # Every sentence already ends with "." -- join with a single space,
+    # never ". ", which was producing ".." throughout the paragraph.
+    sentences = [s if s.endswith(".") else s + "." for s in sentences]
+    paragraph = " ".join(sentences)
+    return Markup(paragraph)
+
+
+def _build_theme_paragraphs(town_label, nearest_town, frontage_name, frontage_dist,
+                             evidence_points, estate, named_density,
+                             location_line=None, seed=None, cell=None):
+    """
+    Builds the new narrative-driven theme paragraphs (exactly as per GPT's suggestion)
+    using the provided theme lists. Returns a list of sentences (paragraphs) to append.
+    """
+    rng = random.Random(seed) if seed is not None else random
+
+    # Determine narrative based on evidence
+    def _determine_narrative(pts):
+        counts = {}
+        for label, _, _ in pts:
+            counts[label] = counts.get(label, 0) + 1
+        if counts.get("Schools", 0) >= 2 and counts.get("Hospitals", 0) >= 1:
+            return "family"
+        if counts.get("Universities", 0) >= 1:
+            return "student"
+        if counts.get("Banks", 0) >= 1 and (counts.get("Petrol Stations", 0) >= 1 or counts.get("Shopping", 0) >= 1):
+            return "commercial"
+        if counts.get("Gated Communities", 0) >= 1:
+            return "peaceful"
+        return "general"
+
+    narrative = _determine_narrative(evidence_points)
+    theme_keys = _NARRATIVE_THEMES.get(narrative, _NARRATIVE_THEMES["general"])
+
+    # Group amenities for proof
+    groups = {}
+    for label, name, dist in evidence_points:
+        groups.setdefault(label, []).append((name, dist))
+
+    paragraphs = []
+
+    for theme_key in theme_keys:
+        if theme_key not in _THEME_LISTS:
+            continue
+        template = rng.choice(_THEME_LISTS[theme_key])
+        # Replace placeholders if present
+        if "{town}" in template:
+            template = template.format(town=str(escape(town_label)) if town_label else "the area")
+        if "{distance}" in template and nearest_town and nearest_town[2] is not None:
+            dist_away = _format_distance_away(int(round(nearest_town[2] * 1000)))
+            template = template.format(distance=dist_away)
+        if "{frontage}" in template and frontage_name:
+            template = template.format(frontage=escape(frontage_name.split(",")[0]))
+
+        # For themes that should include amenity examples, append them
+        if theme_key in _THEME_CATEGORIES and _THEME_CATEGORIES[theme_key]:
+            categories = _THEME_CATEGORIES[theme_key]
+            examples = _pick_amenity_examples(groups, categories, max_per_category=2, max_total=4)
+            if examples:
+                if len(examples) == 1:
+                    ex_str = examples[0]
+                else:
+                    ex_str = ", ".join(examples[:-1]) + ", and " + examples[-1]
+                template += f" Examples include {ex_str}."
+
+        paragraphs.append(template)
+
+    return paragraphs
+
+
 # ===========================================================================
-# NEW: Themed sentence pools (psychologically anchored)
+# Theme lists and helper functions (EXACTLY as GPT provided)
 # ===========================================================================
 
-# 1. LOCATION & FIRST IMPRESSION
 LOCATION_THEMES = [
     "Ideally positioned for both convenience and future growth.",
     "Perfectly located to balance accessibility with everyday comfort.",
@@ -1531,7 +1724,6 @@ LOCATION_THEMES = [
     "Surrounded by established infrastructure, the property enjoys a location built for long-term appeal.",
 ]
 
-# 2. LIFESTYLE & CONVENIENCE
 LIFESTYLE_THEMES = [
     "Everything needed for comfortable daily living is already close at hand.",
     "The surrounding neighbourhood makes everyday life remarkably convenient.",
@@ -1547,7 +1739,6 @@ LIFESTYLE_THEMES = [
     "Comfort and convenience come naturally in a location like this.",
 ]
 
-# 3. COMMUNITY & SOCIAL PROOF
 COMMUNITY_THEMES = [
     "The surrounding neighbourhood reflects years of steady residential and commercial growth.",
     "Established homes and businesses demonstrate the area's continued popularity.",
@@ -1563,7 +1754,6 @@ COMMUNITY_THEMES = [
     "The surrounding environment reflects a location that continues to grow in demand.",
 ]
 
-# 4. CONNECTIVITY & ACCESSIBILITY
 ACCESSIBILITY_THEMES = [
     "Excellent connectivity makes travelling around the area simple and convenient.",
     "The surrounding road network provides smooth access to nearby destinations.",
@@ -1577,7 +1767,6 @@ ACCESSIBILITY_THEMES = [
     "Connectivity is one of the strongest advantages this location has to offer.",
 ]
 
-# 5. DEVELOPMENT OPPORTUNITY
 DEVELOPMENT_THEMES = [
     "The property's location supports a wide range of future development opportunities.",
     "Its combination of accessibility and surrounding infrastructure provides exceptional flexibility.",
@@ -1591,7 +1780,6 @@ DEVELOPMENT_THEMES = [
     "This is a location capable of supporting multiple successful development outcomes.",
 ]
 
-# 6. INVESTMENT CONFIDENCE
 INVESTMENT_THEMES = [
     "Strong supporting infrastructure provides confidence for long-term investment.",
     "The surrounding developments demonstrate the area's continued growth and stability.",
@@ -1607,7 +1795,6 @@ INVESTMENT_THEMES = [
     "The area's proven growth makes it an attractive place to invest with confidence.",
 ]
 
-# 7. RENTAL DEMAND
 RENTAL_THEMES = [
     "The surrounding institutions continue to support healthy rental demand.",
     "The area's existing activity creates favourable conditions for long-term rental occupancy.",
@@ -1619,7 +1806,6 @@ RENTAL_THEMES = [
     "The surrounding community provides a reliable foundation for long-term occupancy.",
 ]
 
-# 8. SCARCITY (Subtle)
 SCARCITY_THEMES = [
     "Well-located properties within established neighbourhoods continue to attract strong buyer interest.",
     "Opportunities in well-connected locations like this are becoming increasingly sought after.",
@@ -1631,7 +1817,6 @@ SCARCITY_THEMES = [
     "The area's continued growth highlights the importance of securing opportunities early.",
 ]
 
-# 9. CLOSINGS
 CLOSING_THEMES = [
     "Altogether, the property's location, accessibility, and surrounding infrastructure create an opportunity that is both practical today and valuable for the future.",
     "Whether purchasing to build, invest, or develop, this property offers a strong foundation for long-term success.",
@@ -1645,235 +1830,52 @@ CLOSING_THEMES = [
     "This is more than a well-located property. It is a location positioned to continue creating value for years to come.",
 ]
 
-# ---------------------------------------------------------------------------
-# THEME SELECTION
-# ---------------------------------------------------------------------------
+_THEME_LISTS = {
+    "location": LOCATION_THEMES,
+    "lifestyle": LIFESTYLE_THEMES,
+    "community": COMMUNITY_THEMES,
+    "accessibility": ACCESSIBILITY_THEMES,
+    "development": DEVELOPMENT_THEMES,
+    "investment": INVESTMENT_THEMES,
+    "rental": RENTAL_THEMES,
+    "scarcity": SCARCITY_THEMES,
+    "closing": CLOSING_THEMES,
+}
 
-def _select_primary_theme(cell, evidence_points, estate):
-    """
-    Choose a primary narrative based on the strongest evidence.
-    Returns one of: "Urban Convenience", "Family Living", "Investment Opportunity",
-    "Commercial Hub", "Peaceful Residential", "Future Growth".
-    """
-    amenity_fields = dict(_discover_amenity_fields(cell))
-    counts = {}
-    for label, entries in amenity_fields.items():
-        count = sum(1 for e in entries if e.get("distance_m") is not None and e["distance_m"] <= 3000)
-        counts[label] = count
+_THEME_CATEGORIES = {
+    "location": [],
+    "lifestyle": ["Supermarkets", "Pharmacies", "Banks", "Transit Stops", "Shopping", "Parks"],
+    "community": ["Gated Communities", "Police Stations", "Fire Stations", "Parks"],
+    "accessibility": ["Transit Stops", "Petrol Stations"],
+    "development": ["Universities", "Schools", "Hospitals", "Shopping", "Supermarkets"],
+    "investment": ["Banks", "Supermarkets", "Gated Communities", "Petrol Stations"],
+    "rental": ["Universities", "Schools", "Transit Stops", "Supermarkets"],
+    "scarcity": ["Banks", "Gated Communities", "Hospitals"],
+    "closing": [],
+}
 
-    schools = counts.get("Schools", 0)
-    hospitals = counts.get("Hospitals", 0)
-    universities = counts.get("Universities", 0)
-    banks = counts.get("Banks", 0)
-    supermarkets = counts.get("Supermarkets", 0)
-    petrol = counts.get("Petrol Stations", 0)
-    gated = counts.get("Gated Communities", 0)
-    restaurants = counts.get("Restaurants", 0)
+_NARRATIVE_THEMES = {
+    "family": ["location", "lifestyle", "community", "accessibility", "development", "investment", "scarcity", "closing"],
+    "commercial": ["location", "accessibility", "development", "investment", "scarcity", "closing"],
+    "student": ["location", "lifestyle", "rental", "development", "investment", "closing"],
+    "peaceful": ["location", "lifestyle", "community", "accessibility", "development", "closing"],
+    "general": ["location", "lifestyle", "accessibility", "development", "investment", "closing"],
+}
 
-    # Family Living: schools + hospitals + gated communities
-    if schools >= 2 and hospitals >= 1 and gated >= 1:
-        return "Family Living"
-    if schools >= 3 and hospitals >= 1:
-        return "Family Living"
-
-    # Investment Opportunity: universities + banks + supermarkets
-    if universities >= 1 and banks >= 1 and supermarkets >= 1:
-        return "Investment Opportunity"
-    if universities >= 1 and (counts.get("Student Housing", 0) >= 1):
-        return "Investment Opportunity"
-
-    # Commercial Hub: banks + petrol + supermarkets + restaurants
-    if banks >= 2 and petrol >= 1 and supermarkets >= 1:
-        return "Commercial Hub"
-    if banks >= 1 and petrol >= 1 and restaurants >= 1:
-        return "Commercial Hub"
-
-    # Peaceful Residential: few amenities, gated communities, parks
-    if gated >= 1 and (counts.get("Parks", 0) >= 1):
-        return "Peaceful Residential"
-    if gated >= 2 and schools <= 1:
-        return "Peaceful Residential"
-
-    # Future Growth: if near major road, some amenities, but not overly dense
-    if (banks >= 1 or supermarkets >= 1) and (schools + hospitals + universities) <= 2:
-        return "Future Growth"
-
-    # Default: Urban Convenience (if any amenities)
-    if banks + supermarkets + petrol + restaurants >= 2:
-        return "Urban Convenience"
-
-    # Fallback
-    return "Urban Convenience"
-
-# ---------------------------------------------------------------------------
-# BUILD DESCRIPTION HTML -- THEMED VERSION
-# ---------------------------------------------------------------------------
-
-def _build_description_html(town_label, nearest_town, frontage_name, frontage_dist,
-                             evidence_points, estate, named_density,
-                             location_line=None, seed=None, cell=None):
-    """
-    Builds the Listing Description as a cohesive narrative using the themed
-    sentence pools. Each sentence follows a psychological theme, and the
-    overall narrative is anchored by the primary theme determined from evidence.
-    Distances are fully spelled out (e.g., "1.2 kilometers away").
-    """
-    rng = random.Random(seed) if seed is not None else random
-
-    if estate:
-        evidence_points = [p for p in evidence_points if p[1] != estate[0]]
-
-    minutes = nearest_town[1] if nearest_town else None
-    km = nearest_town[2] if nearest_town else None
-    dist_m = int(round(km * 1000)) if km is not None else None
-    drive_phrase = _format_drive_phrase(minutes)
-    dist_away = _format_distance_away(dist_m) if dist_m is not None else "unknown distance"
-    frontage_short = frontage_name.split(",")[0] if frontage_name else None
-
-    # Select primary theme
-    theme = "Urban Convenience"
-    if cell is not None:
-        theme = _select_primary_theme(cell, evidence_points, estate)
-
-    # Gather specific nearest amenities for insertion into themed sentences
-    amenity_lookup = dict(_discover_amenity_fields(cell)) if cell else {}
-    nearest_school = _nearest_named(amenity_lookup, "Schools")
-    nearest_hospital = _nearest_named(amenity_lookup, "Hospitals")
-    nearest_bank = _nearest_named(amenity_lookup, "Banks")
-    nearest_supermarket = _nearest_named(amenity_lookup, "Supermarkets")
-    nearest_university = _nearest_named(amenity_lookup, "Universities")
-    nearest_petrol = _nearest_named(amenity_lookup, "Petrol Stations")
-    nearest_restaurant = _nearest_named(amenity_lookup, "Restaurants")
-    nearest_gated = estate  # already (name, dist)
-
-    sentences = []
-
-    # ---- 1. Location sentence ----
-    # Incorporate distance to town and frontage if available
-    location_template = rng.choice(LOCATION_THEMES)
-    location_sentence = location_template
-    if town_label and dist_m is not None:
-        location_sentence += f" It is located {dist_away} from {town_label}."
-    if frontage_short:
-        location_sentence += f" The property fronts {frontage_short}."
-    sentences.append(location_sentence)
-
-    # ---- 2. Lifestyle sentence ----
-    lifestyle_template = rng.choice(LIFESTYLE_THEMES)
-    lifestyle_sentence = lifestyle_template
-    proof_parts = []
-    if nearest_school:
-        proof_parts.append(f"schools like {escape(nearest_school[0])} ({_format_distance_away(nearest_school[1])})")
-    if nearest_hospital:
-        proof_parts.append(f"healthcare at {escape(nearest_hospital[0])} ({_format_distance_away(nearest_hospital[1])})")
-    if nearest_supermarket:
-        proof_parts.append(f"shopping at {escape(nearest_supermarket[0])} ({_format_distance_away(nearest_supermarket[1])})")
-    if nearest_bank:
-        proof_parts.append(f"banking at {escape(nearest_bank[0])} ({_format_distance_away(nearest_bank[1])})")
-    if proof_parts:
-        if len(proof_parts) == 1:
-            proof_clause = f" with {proof_parts[0]} nearby"
-        elif len(proof_parts) == 2:
-            proof_clause = f" with {proof_parts[0]} and {proof_parts[1]} nearby"
-        else:
-            proof_clause = f" with {', '.join(proof_parts[:-1])}, and {proof_parts[-1]} nearby"
-        lifestyle_sentence += proof_clause + "."
-    else:
-        lifestyle_sentence += "."
-    sentences.append(lifestyle_sentence)
-
-    # ---- 3. Community sentence ----
-    if estate:
-        community_template = rng.choice(COMMUNITY_THEMES)
-        estate_name, estate_dist = estate
-        community_sentence = community_template + f" The established estate {escape(estate_name)} is {_format_distance_away(estate_dist)}."
-        sentences.append(community_sentence)
-    else:
-        community_template = rng.choice(COMMUNITY_THEMES)
-        sentences.append(community_template)
-
-    # ---- 4. Connectivity sentence ----
-    connectivity_template = rng.choice(ACCESSIBILITY_THEMES)
-    connectivity_sentence = connectivity_template
-    if frontage_name:
-        connectivity_sentence += f" The property enjoys frontage on {escape(frontage_short)}."
-    if cell and hasattr(cell, "nearby_roads"):
-        nearby_roads = getattr(cell, "nearby_roads", None) or []
-        major_road = None
-        for road in nearby_roads:
-            if _road_tier(road.get("name")) == "major":
-                major_road = road
-                break
-        if major_road:
-            road_name = _local_road_name(major_road.get("name"))
-            road_dist = major_road.get("distance_m")
-            if road_dist is not None:
-                connectivity_sentence += f" The nearest highway, {escape(road_name)}, is {_format_distance_away(road_dist)}."
-    sentences.append(connectivity_sentence)
-
-    # ---- 5. Development / Investment sentence ----
-    if theme in ("Investment Opportunity", "Commercial Hub"):
-        dev_template = rng.choice(INVESTMENT_THEMES)
-        dev_sentence = dev_template
-        if nearest_bank and nearest_supermarket:
-            dev_sentence += f" With {escape(nearest_bank[0])} and {escape(nearest_supermarket[0])} nearby, the area shows strong commercial fundamentals."
-        elif nearest_bank:
-            dev_sentence += f" The presence of {escape(nearest_bank[0])} reinforces the area's investment appeal."
-        elif nearest_supermarket:
-            dev_sentence += f" {escape(nearest_supermarket[0])} nearby adds to the area's attractiveness for investors."
-        sentences.append(dev_sentence)
-    else:
-        dev_template = rng.choice(DEVELOPMENT_THEMES)
-        sentences.append(dev_template)
-
-    # ---- 6. Rental demand (if applicable) ----
-    if theme in ("Investment Opportunity", "Urban Convenience") and (nearest_university or nearest_hospital):
-        rental_template = rng.choice(RENTAL_THEMES)
-        rental_sentence = rental_template
-        if nearest_university:
-            rental_sentence += f" With {escape(nearest_university[0])} {_format_distance_away(nearest_university[1])}, rental demand is supported by the student population."
-        elif nearest_hospital:
-            rental_sentence += f" Healthcare workers and staff at {escape(nearest_hospital[0])} nearby contribute to consistent rental demand."
-        sentences.append(rental_sentence)
-
-    # ---- 7. Scarcity sentence ----
-    scarcity_template = rng.choice(SCARCITY_THEMES)
-    sentences.append(scarcity_template)
-
-    # ---- 8. Closing sentence ----
-    if theme == "Family Living":
-        closing_sentence = "For families seeking a location that balances everyday convenience with long-term value, this property delivers a compelling opportunity."
-    elif theme == "Investment Opportunity":
-        closing_sentence = "For investors, this property represents a rare combination of growth potential and established infrastructure, making it a strong long-term acquisition."
-    elif theme == "Commercial Hub":
-        closing_sentence = "This is a prime location for commercial or mixed-use development, backed by existing retail, banking, and transport infrastructure."
-    else:
-        closing_sentence = rng.choice(CLOSING_THEMES)
-    sentences.append(closing_sentence)
-
-    # ---- 9. Additional factual sentences (price, air quality, etc.) ----
-    if cell is not None:
-        price_sentence = _price_benchmark_sentence(cell, rng)
-        if price_sentence:
-            sentences.append(price_sentence)
-
-        flat_sentence = _flat_site_sentence(cell, rng)
-        if flat_sentence:
-            sentences.append(flat_sentence)
-
-        soil_sentence = _soil_climate_sentence(cell, rng)
-        if soil_sentence:
-            sentences.append(soil_sentence)
-
-        air_sentence = _air_quality_sentence(cell, rng)
-        if air_sentence:
-            sentences.append(air_sentence)
-
-    # Ensure all sentences end with a period
-    sentences = [s if s.endswith(".") else s + "." for s in sentences]
-    paragraph = " ".join(sentences)
-    return Markup(paragraph)
-
+def _pick_amenity_examples(groups, categories, max_per_category=2, max_total=4):
+    """Pick up to max_total amenity examples from the given categories, sorted by distance."""
+    examples = []
+    for cat in categories:
+        if cat in groups:
+            sorted_items = sorted(groups[cat], key=lambda x: x[1])  # by distance
+            for name, dist in sorted_items[:max_per_category]:
+                if dist is not None:
+                    examples.append(f"{name} ({_format_distance_away(dist)})")
+                else:
+                    examples.append(name)
+                if len(examples) >= max_total:
+                    return examples
+    return examples
 
 def _qr_data_uri(url, box_size=8):
     """Renders a QR code pointing at the Google Maps pin as an in-memory
