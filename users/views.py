@@ -1,18 +1,23 @@
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import get_object_or_404
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .emails import send_verification_email, send_welcome_email
+from .emails import send_password_reset_email, send_verification_email, send_welcome_email
 from .models import UserSignup
 from .serializers import (
     ChangePasswordSerializer,
     EmailVerificationConfirmSerializer,
     EmailVerificationRequestSerializer,
     LoginSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     UserSignupCreateSerializer,
     UserSignupReadSerializer,
 )
@@ -131,6 +136,63 @@ class MeView(APIView):
         if signup is None:
             return Response({"detail": "No profile found for this account."}, status=status.HTTP_404_NOT_FOUND)
         return Response(UserSignupReadSerializer(signup).data)
+
+
+class PasswordResetRequestView(APIView):
+    """POST /api/users/password-reset/request/ — emails a reset link if
+    the address belongs to an active account. Always 202 regardless of
+    outcome — same "don't reveal whether the email exists" posture as
+    ResendVerificationView."""
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+
+        User = get_user_model()
+        try:
+            user = User.objects.get(username__iexact=email, is_active=True)
+        except User.DoesNotExist:
+            return Response(status=status.HTTP_202_ACCEPTED)
+
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        raw_token = default_token_generator.make_token(user)
+        send_password_reset_email(user, uid, raw_token)
+
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+
+class PasswordResetConfirmView(APIView):
+    """POST /api/users/password-reset/confirm/ — the link the person
+    clicks lands on a frontend page that then POSTs {uid, token,
+    new_password} here. Uses Django's own default_token_generator, so
+    the token is single-use in effect: it's derived from the user's
+    current password hash + last login, so it stops validating the
+    instant the password actually changes."""
+
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        User = get_user_model()
+        try:
+            uid = force_str(urlsafe_base64_decode(serializer.validated_data["uid"]))
+            user = User.objects.get(pk=uid, is_active=True)
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+            return Response(
+                {"detail": "This reset link is invalid or has expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not default_token_generator.check_token(user, serializer.validated_data["token"]):
+            return Response(
+                {"detail": "This reset link is invalid or has expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return Response({"detail": "Password updated."}, status=status.HTTP_200_OK)
 
 
 class ChangePasswordView(APIView):

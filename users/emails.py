@@ -61,6 +61,52 @@ def send_welcome_email(signup):
         return False
 
 
+def build_reset_url(uid, raw_token):
+    base_url = getattr(settings, "FRONTEND_BASE_URL", "").rstrip("/")
+    return f"{base_url}/reset-password?uid={uid}&token={raw_token}"
+
+
+def send_password_reset_email(user, uid, raw_token):
+    """
+    Fire-and-log, same posture as send_verification_email — a delivery
+    failure here must never leak whether the account exists or break
+    the request flow. The view always returns 202 regardless.
+    """
+    signup = getattr(user, "signup_profile", None)
+    full_name = signup.full_name if signup else (user.first_name or user.email)
+    reset_url = build_reset_url(uid, raw_token)
+
+    context = {
+        "full_name": full_name,
+        "reset_url": reset_url,
+        "support_email": getattr(settings, "REPLY_TO_EMAIL", "info@scapedatasolutions.com"),
+    }
+
+    try:
+        html_body = render_to_string("email/password_reset_email.html", context)
+    except Exception:
+        logger.exception("Could not render password reset email template for %s", user.email)
+        return False
+
+    text_body = strip_tags(html_body)
+
+    try:
+        message = EmailMultiAlternatives(
+            subject="Reset your Scape Data Solutions password",
+            body=text_body,
+            from_email=getattr(settings, "WELCOME_FROM_EMAIL", settings.DEFAULT_FROM_EMAIL),
+            to=[user.email],
+            reply_to=[getattr(settings, "REPLY_TO_EMAIL", settings.DEFAULT_FROM_EMAIL)],
+        )
+        message.attach_alternative(html_body, "text/html")
+        message.send(fail_silently=False)
+        logger.info("Password reset email sent to %s", user.email)
+        return True
+    except Exception:
+        logger.exception("Failed to send password reset email to %s", user.email)
+        return False
+
+
 def send_verification_email(signup, raw_token):
     """
     Fire-and-log: a delivery failure here must never break the signup

@@ -111,6 +111,25 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, trim_whitespace=False)
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """POST body for /api/users/password-reset/request/."""
+
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """POST body for /api/users/password-reset/confirm/. uid/token come
+    straight from the link the person clicked (see build_reset_url)."""
+
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+
+    def validate_new_password(self, value):
+        django_validate_password(value)
+        return value
+
+
 class ChangePasswordSerializer(serializers.Serializer):
     """POST body for /api/users/change-password/."""
     current_password = serializers.CharField(write_only=True, trim_whitespace=False)
