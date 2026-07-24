@@ -34,6 +34,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup, escape
 from weasyprint import HTML
 
+from .google_client import _road_tier
+
 logger = logging.getLogger("property_intel")
 
 AQI_GOOD_THRESHOLD = 50
@@ -271,12 +273,42 @@ def _display_location_name(pin, cell):
     return f"{pin.latitude}, {pin.longitude}"
 
 
+# Some OSM ways are tagged by their official destination-to-destination
+# name rather than the name Kenyans actually use day to day (e.g. the
+# Thika Superhighway shows up in OSM as "Embu - Nairobi Highway" on the
+# stretch past Thika, since that's where the route officially continues
+# to). This map translates known cases so the report reads the way a
+# local buyer/broker would immediately recognize -- add to it as new
+# mismatches turn up rather than guessing ahead of time. Keyed by a
+# normalized (lowercased, punctuation-stripped) form of the source name.
+_LOCAL_ROAD_NAME_ALIASES = {
+    "embu nairobi highway": "Thika Superhighway",
+    "nairobi embu highway": "Thika Superhighway",
+    "nairobi embu road": "Thika Superhighway",
+    "nairobi thika highway": "Thika Superhighway",
+    "thika nairobi highway": "Thika Superhighway",
+    "thika road": "Thika Superhighway",
+}
+
+
+def _local_road_name(name):
+    """Returns the locally-recognized name for a road if we know of one
+    (see _LOCAL_ROAD_NAME_ALIASES), otherwise the original name
+    unchanged. Applied at display time only -- the raw OSM/Google name
+    is left untouched in the stored cell data for debugging."""
+    if not name:
+        return name
+    key = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+    return _LOCAL_ROAD_NAME_ALIASES.get(key, name)
+
+
 def _town_qualified_road_name(cell, road_name):
     """Appends the nearest resolved town/city to a road name so it's
     unambiguous in the report -- 'Moi Avenue' exists in multiple Kenyan
     towns, and a bare name reads as more specific than it actually is."""
     if not road_name:
         return road_name
+    road_name = _local_road_name(road_name)
     nearest_town = _nearest_town_summary(cell)
     if nearest_town:
         town_label = nearest_town[0]
@@ -1649,11 +1681,29 @@ def render_report_pdf(pin, cell):
 
         frontage_name = _town_qualified_road_name(cell, getattr(cell, "nearest_road_name", None))
         frontage_dist = getattr(cell, "nearest_road_distance_m", None)
-        if not frontage_name:
-            nearby_roads = getattr(cell, "nearby_roads", None) or []
-            if nearby_roads:
-                frontage_name = _town_qualified_road_name(cell, nearby_roads[0].get("name"))
-                frontage_dist = nearby_roads[0].get("distance_m")
+        nearby_roads = getattr(cell, "nearby_roads", None) or []
+        if not frontage_name and nearby_roads:
+            frontage_name = _town_qualified_road_name(cell, nearby_roads[0].get("name"))
+            frontage_dist = nearby_roads[0].get("distance_m")
+
+        # A nearby arterial/highway is a selling point in its own right,
+        # separate from whatever road the plot actually fronts -- e.g.
+        # fronting a residential street 36m away while sitting 4km from
+        # the Thika Superhighway. nearby_roads holds up to 3 nearest
+        # named roads with no major/minor filtering in the ranking, so
+        # this only picks the nearest one that _road_tier calls "major"
+        # and that isn't already the frontage road -- it doesn't change
+        # which roads get fetched or how they're ranked.
+        major_road_name, major_road_dist = None, None
+        frontage_short = frontage_name.split(",")[0] if frontage_name else None
+        for road in nearby_roads:
+            candidate = _local_road_name(road.get("name"))
+            if not candidate or _road_tier(candidate) != "major":
+                continue
+            if frontage_short and candidate == frontage_short:
+                continue
+            major_road_name, major_road_dist = candidate, road.get("distance_m")
+            break
 
         # ---- masthead ----
         ref = f"{str(getattr(pin, 'id', 'N-A'))[:10].upper()}"
@@ -1689,6 +1739,11 @@ def render_report_pdf(pin, cell):
             facts.append({"label": f"Distance to {town_label} Centre", "value": dist_val})
         if frontage_name:
             facts.append({"label": "Frontage", "value": frontage_name.split(",")[0]})
+        if major_road_name and major_road_dist is not None:
+            facts.append({
+                "label": "Nearest Highway",
+                "value": f"{major_road_name} ({_format_distance_away(major_road_dist)})",
+            })
         if county:
             facts.append({"label": "County", "value": county})
 
@@ -1710,6 +1765,11 @@ def render_report_pdf(pin, cell):
         if frontage_name and frontage_dist is not None and frontage_dist >= ROAD_DISTANCE_ALONG_THRESHOLD_M:
             short_name = frontage_name.split(",")[0]
             highlights.append({"text": f"Fronts {short_name}", "dist": _format_distance_away(frontage_dist)})
+        if major_road_name and major_road_dist is not None:
+            highlights.append({
+                "text": f"{major_road_name} access",
+                "dist": _format_distance_away(major_road_dist),
+            })
         for label, name, dist in evidence_points:
             if dist is not None and dist > 0:
                 highlights.append({"text": name, "dist": _format_distance_away(dist)})
