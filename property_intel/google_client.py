@@ -58,6 +58,8 @@ ESTIMATED_COST_USD = {
     "elevation": 0.005,
     "routes_transit": 0.005,
     "roads": 0.005,
+    "soil": 0.0,  # ISRIC SoilGrids -- free, no API key
+    "climate": 0.0,  # NASA POWER -- free, no API key
     "places_text": 0.032,
     "places_photo": 0.007,
 }
@@ -867,6 +869,132 @@ def fetch_elevation(cell: LocationCell):
 
 
 # ---------------------------------------------------------------------------
+# Soil (ISRIC SoilGrids v2.0) -- free, no API key required. Global 250m
+# model, topsoil (0-5cm) only. NOT a substitute for an on-site soil test;
+# treated in pdf.py as informational context, never a fertility verdict.
+# ---------------------------------------------------------------------------
+
+SOILGRIDS_BASE_URL = "https://rest.isric.org/soilgrids/v2.0/properties/query"
+SOILGRIDS_PROPERTIES = ("phh2o", "soc", "nitrogen", "clay", "sand", "silt")
+SOILGRIDS_DEPTH = "0-5cm"
+
+# SoilGrids stores predictions as scaled integers to save space -- divide
+# by these factors to get the conventional unit named in each model field's
+# help_text. Table is from ISRIC's own published conversion-factor docs
+# (docs.isric.org), not something this codebase invented.
+SOILGRIDS_CONVERSION_FACTORS = {
+    "phh2o": 10.0,     # pH*10 -> pH
+    "soc": 10.0,       # dg/kg -> g/kg
+    "nitrogen": 100.0, # cg/kg -> g/kg
+    "clay": 10.0,      # g/kg (permille) -> %
+    "sand": 10.0,      # g/kg (permille) -> %
+    "silt": 10.0,      # g/kg (permille) -> %
+}
+
+
+def fetch_soil_data(cell: LocationCell):
+    lat, lon = float(cell.center_latitude), float(cell.center_longitude)
+    params = [("lon", lon), ("lat", lat), ("depth", SOILGRIDS_DEPTH), ("value", "mean")]
+    for prop in SOILGRIDS_PROPERTIES:
+        params.append(("property", prop))
+
+    try:
+        resp = requests.get(SOILGRIDS_BASE_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
+        data = resp.json()
+        succeeded = resp.status_code == 200 and bool(data.get("properties", {}).get("layers"))
+    except requests.RequestException as exc:
+        logger.warning("SoilGrids fetch failed for cell %s: %s", cell.geohash, exc)
+        _log_call("soil", cell, {"lon": lon, "lat": lat}, None, False)
+        raise EnrichmentStepFailed("soil") from exc
+    except ValueError as exc:
+        logger.warning("SoilGrids returned non-JSON for cell %s: %s", cell.geohash, exc)
+        _log_call("soil", cell, {"lon": lon, "lat": lat}, getattr(resp, "status_code", None), False)
+        raise EnrichmentStepFailed("soil: non-JSON response") from exc
+
+    _log_call("soil", cell, {"lon": lon, "lat": lat}, resp.status_code, succeeded)
+
+    if not succeeded:
+        raise EnrichmentStepFailed(f"soil returned status={resp.status_code}")
+
+    parsed = {}
+    for layer in data.get("properties", {}).get("layers", []):
+        name = layer.get("name")
+        depths = layer.get("depth") or layer.get("depths") or []
+        if not depths:
+            continue
+        mean_raw = depths[0].get("values", {}).get("mean")
+        if mean_raw is None or name not in SOILGRIDS_CONVERSION_FACTORS:
+            continue
+        parsed[name] = round(mean_raw / SOILGRIDS_CONVERSION_FACTORS[name], 2)
+
+    cell.soil_ph = parsed.get("phh2o")
+    cell.soil_organic_carbon_g_per_kg = parsed.get("soc")
+    cell.soil_nitrogen_g_per_kg = parsed.get("nitrogen")
+    cell.soil_clay_pct = parsed.get("clay")
+    cell.soil_sand_pct = parsed.get("sand")
+    cell.soil_silt_pct = parsed.get("silt")
+    cell.soil_raw_response = data
+    cell.soil_fetched_at = timezone.now()
+    cell.save(update_fields=[
+        "soil_ph", "soil_organic_carbon_g_per_kg", "soil_nitrogen_g_per_kg",
+        "soil_clay_pct", "soil_sand_pct", "soil_silt_pct",
+        "soil_raw_response", "soil_fetched_at",
+    ])
+    return cell
+
+
+# ---------------------------------------------------------------------------
+# Climate (NASA POWER) -- free, no API key required. Returns 30-year point
+# climatology "normals", not this year's actual weather -- annual rainfall
+# here is a long-run average, always labelled as such downstream.
+# ---------------------------------------------------------------------------
+
+NASA_POWER_CLIMATOLOGY_URL = "https://power.larc.nasa.gov/api/temporal/climatology/point"
+DAYS_PER_YEAR = 365.0
+
+
+def fetch_climate_data(cell: LocationCell):
+    lat, lon = float(cell.center_latitude), float(cell.center_longitude)
+    params = {
+        "parameters": "PRECTOTCORR,T2M",
+        "community": "AG",
+        "longitude": lon,
+        "latitude": lat,
+        "format": "JSON",
+    }
+    try:
+        resp = requests.get(NASA_POWER_CLIMATOLOGY_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
+        data = resp.json()
+        succeeded = resp.status_code == 200 and bool(data.get("properties", {}).get("parameter"))
+    except requests.RequestException as exc:
+        logger.warning("NASA POWER fetch failed for cell %s: %s", cell.geohash, exc)
+        _log_call("climate", cell, {"lon": lon, "lat": lat}, None, False)
+        raise EnrichmentStepFailed("climate") from exc
+    except ValueError as exc:
+        logger.warning("NASA POWER returned non-JSON for cell %s: %s", cell.geohash, exc)
+        _log_call("climate", cell, {"lon": lon, "lat": lat}, getattr(resp, "status_code", None), False)
+        raise EnrichmentStepFailed("climate: non-JSON response") from exc
+
+    _log_call("climate", cell, {"lon": lon, "lat": lat}, resp.status_code, succeeded)
+
+    if not succeeded:
+        raise EnrichmentStepFailed(f"climate returned status={resp.status_code}")
+
+    parameter = data.get("properties", {}).get("parameter", {})
+    precip_daily_avg = (parameter.get("PRECTOTCORR") or {}).get("ANN")
+    temp_ann = (parameter.get("T2M") or {}).get("ANN")
+
+    cell.avg_annual_rainfall_mm = round(precip_daily_avg * DAYS_PER_YEAR, 0) if precip_daily_avg is not None else None
+    cell.avg_annual_temp_c = round(temp_ann, 1) if temp_ann is not None else None
+    cell.climate_raw_response = data
+    cell.climate_fetched_at = timezone.now()
+    cell.save(update_fields=[
+        "avg_annual_rainfall_mm", "avg_annual_temp_c", "climate_raw_response", "climate_fetched_at",
+    ])
+    return cell
+
+
+# ---------------------------------------------------------------------------
 # Roads — is the parcel actually on/near a mapped (usually paved) road?
 # ---------------------------------------------------------------------------
 
@@ -1448,6 +1576,8 @@ def enrich_location_cell(cell: LocationCell):
         ("travel times", fetch_travel_times),
         ("nearest towns", fetch_nearest_towns),
         ("elevation", fetch_elevation),
+        ("soil data", fetch_soil_data),
+        ("climate data", fetch_climate_data),
         ("road context", fetch_road_context),
         ("nearby roads context", fetch_nearby_roads_context),
         ("text search amenities", fetch_text_search_amenities),

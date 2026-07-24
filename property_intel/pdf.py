@@ -570,6 +570,7 @@ SUITABILITY_STARS = {
     "High": 4,
     "Medium-High": 3,
     "Medium": 3,
+    "Low-Medium": 2,
     "Low": 1,
 }
 
@@ -580,7 +581,7 @@ def _top_suitability_rows(cell, max_rows=4):
     entirely unless nothing else qualifies. Includes the Residential Home
     row, which the underlying scoring table doesn't produce on its own --
     see _residential_home_row()."""
-    all_rows = _development_suitability_table(cell) + [_residential_home_row(cell)]
+    all_rows = _development_suitability_table(cell) + [_residential_home_row(cell), _agriculture_land_banking_row(cell)]
     ranked = sorted(all_rows, key=lambda r: -SUITABILITY_STARS.get(r[1], 0))
     strong = [r for r in ranked if SUITABILITY_STARS.get(r[1], 0) >= 3]
     return (strong or ranked)[:max_rows]
@@ -603,6 +604,109 @@ def _residential_home_row(cell):
     return ("Residential Home", "Medium", f"Nearest estate, {name}, is {_format_distance_away(dist)}")
 
 
+RURAL_TOWN_DISTANCE_KM_THRESHOLD = 8  # beyond this, "peripheral" reads as honest, not a stretch
+LOW_DENSITY_CATEGORY_COUNT = 2  # at most this many amenity categories present at all
+
+# Broad, commonly-cited ranges for rain-fed agriculture (not specific to any
+# one crop). Deliberately conservative and wide -- this is informational
+# context from a global 250m soil model and a 30-year climate normal, not a
+# site-specific agronomic assessment, so it's only ever used to add a real
+# citation, never to declare a plot "fertile."
+AGRICULTURE_PH_RANGE = (5.5, 7.5)
+AGRICULTURE_MIN_RAINFALL_MM = 600
+
+
+def _agriculture_land_banking_row(cell):
+    """'Agriculture / Land Banking' suitability row.
+
+    Two tiers of evidence, both real:
+
+    1. Soil (ISRIC SoilGrids, cell.soil_ph) and climate (NASA POWER,
+       cell.avg_annual_rainfall_mm) -- fetched by google_client.py's
+       fetch_soil_data()/fetch_climate_data(). When both fall inside a
+       broad, commonly-cited workable range for rain-fed agriculture, this
+       function cites the actual numbers directly, always with an explicit
+       on-site-testing caveat. When the numbers exist but fall OUTSIDE that
+       range, this function does NOT print a negative soil/rainfall claim --
+       consistent with how _air_quality_sentence() only ever surfaces good
+       air-quality data -- it just falls through to tier 2 instead.
+
+    2. Rurality proxy (distance from nearest resolved town, amenity
+       density, road paving) -- used whenever soil/climate data isn't
+       available or isn't itself favorable. This NEVER claims soil quality;
+       it only describes how peripheral/undeveloped the area reads as.
+
+    If you want a real, crop-specific fertility verdict, that's a
+    genuinely harder problem than an API call (drainage, existing land use,
+    and local knowledge all matter) and belongs with a licensed agronomist,
+    not this report.
+    """
+    amenity_fields = _discover_amenity_fields(cell)
+    categories_present = len(amenity_fields)
+
+    nearest_town = _nearest_town_summary(cell)
+    km = nearest_town[2] if nearest_town else None
+    on_paved = getattr(cell, "on_paved_road", None)
+    town_label = nearest_town[0] if nearest_town else "the nearest town"
+
+    is_peripheral = km is not None and km >= RURAL_TOWN_DISTANCE_KM_THRESHOLD
+    is_low_density = categories_present <= LOW_DENSITY_CATEGORY_COUNT
+
+    soil_ph = getattr(cell, "soil_ph", None)
+    rainfall_mm = getattr(cell, "avg_annual_rainfall_mm", None)
+    ph_favorable = soil_ph is not None and AGRICULTURE_PH_RANGE[0] <= soil_ph <= AGRICULTURE_PH_RANGE[1]
+    rainfall_favorable = rainfall_mm is not None and rainfall_mm >= AGRICULTURE_MIN_RAINFALL_MM
+
+    if ph_favorable and rainfall_favorable:
+        rationale = (
+            f"Topsoil pH of {soil_ph} and average annual rainfall of {int(rainfall_mm)}mm "
+            "(30-year normal) both fall within ranges commonly considered workable for "
+            "rain-fed agriculture, though on-site soil testing is still recommended before "
+            "a farming-based purchase decision"
+        )
+        level = "High" if (is_peripheral or is_low_density) else "Medium-High"
+        return ("Agriculture / Land Banking", level, rationale)
+
+    if ph_favorable or rainfall_favorable:
+        if ph_favorable:
+            fact = f"Topsoil pH of {soil_ph} falls within a workable range for most crops"
+        else:
+            fact = f"Average annual rainfall of {int(rainfall_mm)}mm (30-year normal) supports rain-fed agriculture"
+        rationale = f"{fact}, though on-site soil testing is still recommended before a farming-based purchase decision"
+        level = "Medium-High" if (is_peripheral or is_low_density) else "Medium"
+        return ("Agriculture / Land Banking", level, rationale)
+
+    if is_peripheral and is_low_density:
+        rationale = (
+            f"Sits {km} kilometers from {town_label} with few competing developments nearby, "
+            "the kind of quiet, undeveloped setting often used for agriculture or long-term land banking "
+            "(soil quality itself is not verified by this report)"
+        )
+        return ("Agriculture / Land Banking", "Medium", rationale)
+
+    if is_peripheral:
+        rationale = (
+            f"Sits {km} kilometers from {town_label}, peripheral enough to suit land banking, "
+            "though the surrounding area already has some development "
+            "(soil quality itself is not verified by this report)"
+        )
+        return ("Agriculture / Land Banking", "Low-Medium", rationale)
+
+    if on_paved is False:
+        rationale = (
+            "Not on a paved road, consistent with an undeveloped or agricultural plot "
+            "(soil quality itself is not verified by this report)"
+        )
+        return ("Agriculture / Land Banking", "Low-Medium", rationale)
+
+    return (
+        "Agriculture / Land Banking",
+        "Low",
+        "Proximity to town and existing development make this a better fit for residential or "
+        "commercial use than agriculture",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Evidence collection -- the core of the template. Every claim on the
 # report traces back to one of these (label, name, distance_m) points.
@@ -613,6 +717,7 @@ def _residential_home_row(cell):
 EVIDENCE_CATEGORY_PRIORITY = (
     "Schools",
     "Hospitals",
+    "Pharmacies",
     "Universities",
     "Banks",
     "Supermarkets",
@@ -621,10 +726,18 @@ EVIDENCE_CATEGORY_PRIORITY = (
     "Police Stations",
     "Fire Stations",
     "EV Charging",
+    "Transit Stops",
     "Restaurants",  # notable ones only
     "Shopping",  # malls/marketplaces only -- nearby_shopping never fetches generic small shops
     "Parks",
 )
+# NOTE ON PREVIOUSLY-DROPPED DATA: nearby_pharmacies and nearby_transit_stops
+# are fetched and stored on every LocationCell (see models.py) and were
+# already being picked up by _discover_amenity_fields(), but this priority
+# tuple never listed them, so _collect_evidence_points() silently discarded
+# both categories on every single report. They're real, named, distance-
+# bearing data points like any other amenity, so they're restored here
+# rather than left excluded.
 
 # Human-friendly noun for each category, used only when weaving the
 # "putting X, Y and Z within a short walk" clause of the description.
@@ -632,6 +745,7 @@ _CATEGORY_BENEFIT_NOUN = {
     "Schools": "schooling",
     "Universities": "education",
     "Hospitals": "healthcare",
+    "Pharmacies": "everyday healthcare",
     "Banks": "banking",
     "Supermarkets": "shopping",
     "Gated Communities": "established housing",
@@ -639,6 +753,7 @@ _CATEGORY_BENEFIT_NOUN = {
     "Police Stations": "security",
     "Fire Stations": "safety",
     "EV Charging": "electric vehicle charging",
+    "Transit Stops": "public transport",
     "Restaurants": "dining",
     "Shopping": "retail",
     "Parks": "green space",
@@ -720,106 +835,149 @@ CATEGORY_SENTENCE_TEMPLATES = {
         "{name} is {dist}, offering quality schooling for families.",
         "With {name} {dist}, children enjoy a short trip to school.",
         "The nearby {name} ({dist}) makes school runs quick and easy.",
-        "Parents will love {name} just {dist} – a great school close by.",
+        "Parents will love {name} just {dist}, a great school close by.",
         "Schooling is convenient with {name} only {dist} from home.",
         "{name} {dist} means less time commuting and more family time.",
-        "A top school, {name}, is {dist} – ideal for growing families.",
+        "A top school, {name}, is {dist}, ideal for growing families.",
+        "Families already send their children to {name}, only {dist}.",
+        "{name} is {dist}, one less logistics headache for parents.",
+        "The area's school runs are simple, with {name} just {dist}.",
+        "{name}, {dist}, gives young families a reason to put down roots here.",
+        "A confirmed school, {name}, sits {dist}, backing up the area's family appeal.",
+        "For anyone raising a family, {name} {dist} is a genuine, everyday convenience.",
     ],
     "Universities": [
         "{name} {dist} provides higher education within easy reach.",
-        "University students benefit from {name} just {dist} away.",
+        "University students benefit from {name} just {dist}.",
         "{name} is {dist}, opening up tertiary education opportunities.",
         "With {name} {dist}, campus life is always close at hand.",
         "The university {name} is {dist}, perfect for students and staff.",
-        "Higher learning at {name} is accessible – only {dist} from here.",
+        "Higher learning at {name} is accessible, only {dist} from here.",
         "{name} {dist} makes attending lectures and events effortless.",
+        "Staff and students at {name} already commute from this area, {dist}.",
+        "{name}, {dist}, is exactly the kind of proximity student tenants look for.",
+        "A confirmed university, {name}, is {dist}, a strong signal for rental demand.",
+        "Lecturers and students alike value being {dist} from {name}.",
+        "With {name} just {dist}, campus commutes stop being a daily hassle.",
     ],
     "Hospitals": [
         "Healthcare is close with {name} only {dist} from the property.",
         "{name} {dist} ensures medical care is always within quick reach.",
         "Residents appreciate {name} just {dist} for peace of mind.",
         "The hospital {name} is {dist}, offering reliable healthcare access.",
-        "For medical emergencies, {name} is {dist} – reassuringly close.",
-        "{name} {dist} provides top‑notch healthcare without the long drive.",
-        "With {name} {dist}, you're never far from quality medical services.",
+        "For medical emergencies, {name} is {dist}, reassuringly close.",
+        "{name} {dist} provides quality healthcare without the long drive.",
+        "With {name} {dist}, you're never far from medical services.",
+        "Neighbours already rely on {name}, {dist}, for their care.",
+        "A verified hospital, {name}, sits {dist}, real reassurance for any household.",
+        "{name}, {dist}, means a health scare never has to mean a long drive.",
+        "Having {name} {dist} is the kind of safety net most buyers look for.",
+    ],
+    "Pharmacies": [
+        "{name} is {dist}, keeping everyday medicine and check-ups close by.",
+        "With {name} {dist}, a prescription is never far away.",
+        "The nearby pharmacy {name} ({dist}) covers day-to-day health needs.",
+        "{name}, only {dist}, makes routine medication runs simple.",
+        "Residents can reach {name} in {dist}, no need to plan ahead.",
+        "A confirmed pharmacy, {name}, is {dist}, useful for the whole household.",
+        "{name} {dist} rounds out the area's everyday healthcare access.",
     ],
     "Banks": [
         "Banking is easy with {name} only {dist} for your financial needs.",
         "{name} {dist} puts everyday banking right on your doorstep.",
-        "Financial services at {name} are just {dist} – very convenient.",
-        "Manage your money with ease – {name} is {dist} from home.",
-        "{name} {dist} means no more long queues; banking is hassle‑free.",
+        "Financial services at {name} are just {dist}, very convenient.",
+        "Manage your money with ease, {name} is {dist} from home.",
+        "{name} {dist} means shorter queues and simpler banking.",
         "The nearest bank, {name}, is {dist}, saving you valuable time.",
         "With {name} {dist}, you can handle banking errands in minutes.",
+        "{name}, {dist}, is the kind of established institution serious buyers check for.",
+        "A confirmed branch of {name} sits {dist}, real financial infrastructure nearby.",
+        "Households here already bank at {name}, only {dist}.",
     ],
     "Supermarkets": [
-        "Grocery shopping is a breeze with {name} only {dist} away.",
+        "Grocery shopping is a breeze with {name} only {dist}.",
         "{name} {dist} ensures you can pick up fresh food quickly.",
         "The supermarket {name} is {dist}, making daily shopping effortless.",
-        "For everyday needs, {name} is {dist} – incredibly handy.",
+        "For everyday needs, {name} is {dist}, incredibly handy.",
         "With {name} {dist}, you'll never run out of essentials.",
-        "Shopping at {name} is convenient – it's just {dist} from here.",
-        "Stock up with ease – {name} is only {dist} for all your groceries.",
+        "Shopping at {name} is convenient, it's just {dist} from here.",
+        "Stock up with ease, {name} is only {dist} for all your groceries.",
+        "Neighbours already do their weekly shop at {name}, {dist}.",
+        "{name}, {dist}, is a small but real daily-life advantage worth factoring in.",
+        "A confirmed supermarket, {name}, at {dist}, keeps errands short and simple.",
     ],
     "Gated Communities": [
         "The established estate {name} is {dist}, offering secure living.",
-        "{name} {dist} provides a sought‑after neighbourhood setting.",
+        "{name} {dist} provides a sought-after neighbourhood setting.",
         "With {name} just {dist}, you benefit from a prestigious address.",
         "The gated community {name} is {dist}, ensuring safety and comfort.",
-        "Residents of {name} enjoy a secure environment, only {dist} away.",
+        "Residents of {name} enjoy a secure environment, only {dist}.",
         "{name} {dist} adds to the area's desirability for homebuyers.",
-        "A peaceful estate, {name}, is {dist} – perfect for families.",
+        "A peaceful estate, {name}, is {dist}, perfect for families.",
+        "The presence of {name}, {dist}, shows this area already attracts serious homeowners.",
+        "Buyers looking for company will find {name}, {dist}, already home to an established community.",
+        "{name}, {dist}, is proof this location has already passed other buyers' due diligence.",
     ],
     "Petrol Stations": [
         "Fuel up quickly with {name} only {dist} for your vehicle.",
-        "{name} {dist} makes refuelling convenient and stress‑free.",
+        "{name} {dist} makes refuelling convenient and stress-free.",
         "The petrol station {name} is {dist}, saving you time on the road.",
         "With {name} {dist}, you'll never worry about running out of fuel.",
-        "Petrol is easily accessible – {name} is just {dist} away.",
-        "Fill up at {name} {dist} – ideal for busy commuters.",
+        "Petrol is easily accessible, {name} is just {dist}.",
+        "Fill up at {name} {dist}, ideal for busy commuters.",
         "{name} {dist} keeps your journeys moving without detours.",
+        "A confirmed fuel stop, {name}, is {dist}, useful for daily commuters.",
     ],
     "Police Stations": [
         "Security is enhanced with {name} only {dist} from the property.",
         "The police station {name} is {dist}, providing added peace of mind.",
         "With {name} {dist}, law enforcement is always close at hand.",
-        "Residents feel safer knowing {name} is just {dist} away.",
-        "A police station, {name}, is {dist} – ensuring quick response times.",
-        "Neighbourhood safety is a priority – {name} is only {dist} from here.",
+        "Residents feel safer knowing {name} is just {dist}.",
+        "A police station, {name}, is {dist}, ensuring quick response times.",
+        "Neighbourhood safety is a priority, {name} is only {dist} from here.",
         "{name} {dist} adds an extra layer of security for your family.",
+        "A verified police post, {name}, sits {dist}, real reassurance for any household.",
     ],
     "Fire Stations": [
         "Fire safety is covered with {name} only {dist} from the site.",
         "The fire station {name} is {dist}, ensuring rapid emergency response.",
         "With {name} {dist}, you're protected against fire hazards.",
-        "Emergency services are near – {name} is just {dist} away.",
-        "A fire station, {name}, is {dist} – crucial for safety.",
+        "Emergency services are near, {name} is just {dist}.",
+        "A fire station, {name}, is {dist}, crucial for safety.",
         "Residents benefit from {name} {dist}, reducing fire risk.",
         "{name} {dist} means professional help is minutes away.",
     ],
     "EV Charging": [
-        "Electric vehicle owners will love {name} only {dist} for charging.",
+        "Electric vehicle owners will find {name} only {dist} for charging.",
         "{name} {dist} makes owning an EV practical and convenient.",
         "With {name} {dist}, you can charge your car without hassle.",
-        "The EV charging station {name} is {dist} – future‑ready.",
-        "Sustainable driving is easy – {name} is just {dist} away.",
-        "Charge up at {name} {dist} – ideal for eco‑conscious buyers.",
-        "No range anxiety – {name} is only {dist} for your EV needs.",
+        "The EV charging station {name} is {dist}, future-ready infrastructure.",
+        "Sustainable driving is easy, {name} is just {dist}.",
+        "Charge up at {name} {dist}, ideal for eco-conscious buyers.",
+        "{name} is only {dist}, useful reassurance for EV owners.",
+    ],
+    "Transit Stops": [
+        "{name} is {dist}, keeping the property connected without a car.",
+        "With {name} just {dist}, commuting without a car is realistic here.",
+        "The transit stop {name} ({dist}) links the property to the wider city.",
+        "{name}, only {dist}, is useful for staff, tenants, or visitors without a vehicle.",
+        "Public transport is close, {name} sits {dist} from the property.",
+        "A confirmed stop, {name}, at {dist}, adds genuine transport flexibility.",
     ],
     "Restaurants": [
-        "Dining out is a delight with {name} only {dist} from home.",
-        "{name} {dist} offers fantastic meals just a short walk away.",
-        "Enjoy a meal at {name} – it's {dist}, perfect for food lovers.",
-        "The restaurant {name} is {dist}, adding to the local flavour.",
+        "Dining out is easy with {name} only {dist} from home.",
+        "{name} {dist} offers a well-known option just a short walk away.",
+        "Enjoy a meal at {name}, it's {dist}, a nice option nearby.",
+        "The venue {name} is {dist}, adding to the local flavour.",
         "With {name} {dist}, you can treat yourself without the drive.",
-        "A great eatery, {name}, is {dist} – ideal for casual dining.",
-        "{name} {dist} means delicious food is always close at hand.",
+        "A known name in the area, {name}, is {dist}.",
+        "{name} {dist} means a familiar meal spot is always close at hand.",
     ],
     # Fallback for any unknown category
     "default": [
         "{name} is {dist}, adding convenience to your daily life.",
         "With {name} {dist}, you have essential services within reach.",
-        "{name} is only {dist} – a practical benefit for residents.",
+        "{name} is only {dist}, a practical benefit for residents.",
         "The nearby {name} ({dist}) makes everything more accessible.",
     ]
 }
@@ -898,6 +1056,8 @@ _FRONTAGE_SENTENCES = [
     "It enjoys direct frontage on {frontage}.",
     "The plot has frontage onto {frontage}.",
     "It sits with frontage on {frontage}.",
+    "Direct frontage on {frontage} is confirmed for this plot.",
+    "This plot fronts directly onto {frontage}.",
 ]
 
 _OPENER_END_SENTENCES = [
@@ -912,9 +1072,11 @@ _OPENER_END_SENTENCES = [
     "This property provides exceptional connectivity for residential or commercial use.",
     "This property is ideally placed for residential or commercial development.",
     "This property affords strong accessibility for a range of residential or commercial uses.",
+    "This property gives buyers a genuinely well-connected base for residential or commercial plans.",
+    "This property's location already does much of the work for a future residential or commercial build.",
 ]
 
-# Services templates – many variations
+# Services templates -- many variations
 _SERVICES_TEMPLATES = [
     "Nearby amenities include {svc_list}, placing {nouns} within a short walk.",
     "Within walking distance are {svc_list}, ensuring {nouns} are all close by.",
@@ -935,7 +1097,7 @@ _SERVICES_TEMPLATES = [
     "The property benefits from nearby {svc_list}, placing {nouns} within a comfortable stroll.",
 ]
 
-# NEW: Short service sentences (12–15 words) – these will be used alongside the longer ones.
+# NEW: Short service sentences (12-15 words) -- used alongside the longer ones.
 _SHORT_SERVICES = [
     "Nearby services include {svc_list}.",
     "Within walking distance are {svc_list}.",
@@ -1082,16 +1244,238 @@ def _format_named_density_sentence(named_density):
     return "The area also offers " + ", plus ".join(chunks) + ", a strong service base for buyers."
 
 
+# ---------------------------------------------------------------------------
+# Previously-fetched-but-unused data, restored as their own honest sentences.
+#
+# PRICE_BENCHMARKS is real, sourced market data (see the dict definition
+# near the top of this file, with its quarter and note fields) that was
+# only ever used to pick a fallback location label or to compute the
+# internal (unprinted) investment score. It never appeared as a sentence
+# in the actual report, even though it's exactly the kind of concrete,
+# named, dated evidence this report is built around. Restoring it also
+# doubles as an honest Cialdini "authority" cue (named market data, not an
+# AI opinion) and, where yoy growth is genuinely positive, a truthful
+# "scarcity of opportunity" cue -- real appreciation trends, not an
+# invented countdown.
+# ---------------------------------------------------------------------------
+
+_PRICE_BENCHMARK_TEMPLATES_POSITIVE = [
+    "Land in {town} appreciated {yoy}% year-on-year as of {quarter}, {note}.",
+    "Published market data puts {town} land appreciation at {yoy}% year-on-year ({quarter}), {note}.",
+    "{town} land values rose {yoy}% year-on-year in {quarter}, {note}.",
+    "According to {quarter} market data, {town} has seen {yoy}% year-on-year appreciation, {note}.",
+]
+
+_PRICE_BENCHMARK_TEMPLATES_FLAT = [
+    "{town} land values were broadly stable in {quarter}, {note}.",
+    "Market data shows {town} land prices held steady through {quarter}, {note}.",
+]
+
+
+def _price_benchmark_sentence(cell, rng):
+    """Sentence built from PRICE_BENCHMARKS, only when this pin actually
+    matches one of the named towns in that dict (via _match_price_benchmark).
+    Never invents a percentage or quarter; both come straight from the
+    benchmark entry."""
+    town, benchmark = _match_price_benchmark(cell)
+    if not benchmark or benchmark.get("yoy_change_pct") is None or not benchmark.get("note"):
+        return None
+    yoy = benchmark["yoy_change_pct"]
+    quarter = benchmark.get("quarter", "the most recent quarter")
+    town_label = town.title()
+    if yoy > 0:
+        template = rng.choice(_PRICE_BENCHMARK_TEMPLATES_POSITIVE)
+    else:
+        template = rng.choice(_PRICE_BENCHMARK_TEMPLATES_FLAT)
+    return template.format(town=escape(town_label), yoy=yoy, quarter=escape(quarter), note=benchmark["note"])
+
+
+# Air Quality history/category is fetched (air_quality_category,
+# air_quality_good_days_streak) but never printed anywhere in the report --
+# only air_quality_index feeds the unprinted internal score. Restored here
+# as its own short, honest sentence, only when the data is genuinely good
+# news; a bad-air-quality pin simply gets no sentence rather than a
+# negative one, consistent with this report's "sell only what's true and
+# positive, skip what isn't" design.
+_AIR_QUALITY_TEMPLATES = [
+    "Air quality here is rated {category}, with {streak} consecutive good-air days recorded.",
+    "The area has logged {streak} straight good-air-quality days, rated {category} overall.",
+    "Air quality monitoring rates this location {category}, with a {streak}-day good-air streak on record.",
+]
+
+_AIR_QUALITY_TEMPLATES_NO_STREAK = [
+    "Air quality here is rated {category}.",
+    "The area's air quality is monitored and currently rated {category}.",
+]
+
+
+def _air_quality_sentence(cell, rng):
+    aqi = getattr(cell, "air_quality_index", None)
+    category = (getattr(cell, "air_quality_category", "") or "").strip()
+    streak = getattr(cell, "air_quality_good_days_streak", None)
+    if aqi is None or aqi > AQI_GOOD_THRESHOLD or not category:
+        return None
+    if streak:
+        template = rng.choice(_AIR_QUALITY_TEMPLATES)
+        return template.format(category=escape(category), streak=streak)
+    template = rng.choice(_AIR_QUALITY_TEMPLATES_NO_STREAK)
+    return template.format(category=escape(category))
+
+
+# elevation_slope_range_m (max-min elevation across a 5-point sample grid)
+# is fetched but never printed. A small range is a genuine, checkable
+# signal that the site is flat -- useful for construction cost and,
+# honestly, for farming too, without ever claiming anything about the soil
+# itself.
+FLAT_SITE_SLOPE_RANGE_M = 3.0
+
+_FLAT_SITE_TEMPLATES = [
+    "Elevation across the site varies by only {slope} meters, indicating flat, easy-to-build terrain.",
+    "An elevation survey of the site shows just {slope} meters of variation, consistent with flat, level ground.",
+    "The site is notably flat, with elevation varying by only {slope} meters across the plot.",
+]
+
+
+def _flat_site_sentence(cell, rng):
+    slope = getattr(cell, "elevation_slope_range_m", None)
+    if slope is None or slope > FLAT_SITE_SLOPE_RANGE_M:
+        return None
+    template = rng.choice(_FLAT_SITE_TEMPLATES)
+    return template.format(slope=round(slope, 1))
+
+
+# Soil (ISRIC SoilGrids) / climate (NASA POWER) data restored as its own
+# sentence, gated on the same AGRICULTURE_PH_RANGE / AGRICULTURE_MIN_RAINFALL_MM
+# thresholds as _agriculture_land_banking_row(), so the description and the
+# suitability table never contradict each other. Only fires when at least
+# one of the two figures is genuinely favorable; an unfavorable pH/rainfall
+# reading is simply omitted rather than reported negatively.
+_SOIL_CLIMATE_TEMPLATES_BOTH = [
+    "Soil data shows a topsoil pH of {ph}, and climate records show {rainfall}mm of average annual rainfall, both workable for rain-fed agriculture (on-site testing is still advised before any farming investment).",
+    "This location has a topsoil pH of {ph} and an average annual rainfall of {rainfall}mm, a combination generally considered workable for rain-fed farming.",
+]
+
+_SOIL_CLIMATE_TEMPLATES_PH_ONLY = [
+    "Soil data for this location shows a topsoil pH of {ph}, within a workable range for most crops (on-site testing is still advised before any farming investment).",
+]
+
+_SOIL_CLIMATE_TEMPLATES_RAIN_ONLY = [
+    "Climate records show {rainfall}mm of average annual rainfall here, a 30-year normal supportive of rain-fed agriculture.",
+]
+
+
+def _soil_climate_sentence(cell, rng):
+    soil_ph = getattr(cell, "soil_ph", None)
+    rainfall_mm = getattr(cell, "avg_annual_rainfall_mm", None)
+    ph_favorable = soil_ph is not None and AGRICULTURE_PH_RANGE[0] <= soil_ph <= AGRICULTURE_PH_RANGE[1]
+    rainfall_favorable = rainfall_mm is not None and rainfall_mm >= AGRICULTURE_MIN_RAINFALL_MM
+
+    if ph_favorable and rainfall_favorable:
+        template = rng.choice(_SOIL_CLIMATE_TEMPLATES_BOTH)
+        return template.format(ph=soil_ph, rainfall=int(rainfall_mm))
+    if ph_favorable:
+        return rng.choice(_SOIL_CLIMATE_TEMPLATES_PH_ONLY).format(ph=soil_ph)
+    if rainfall_favorable:
+        return rng.choice(_SOIL_CLIMATE_TEMPLATES_RAIN_ONLY).format(rainfall=int(rainfall_mm))
+    return None
+
+
+# ---------------------------------------------------------------------------
+# "Combined intelligence": synthesis sentences that don't cite a single
+# amenity but instead name two or more real, already-cited evidence points
+# together and state what buyer profile they jointly support. Each check
+# below requires at least two genuine, distinct data points to be present
+# before it fires -- this is the "given this and this, this area is
+# suitable for X" behaviour, built strictly from real evidence rather than
+# invented reasoning.
+# ---------------------------------------------------------------------------
+
+_FAMILY_FIT_TEMPLATES = [
+    "With both {school} and {hospital} nearby, this location covers two of the biggest priorities for families.",
+    "Having {school} and {hospital} both close by makes this a practical, low-stress base for raising a family.",
+    "{school} and {hospital}, both within reach, are exactly the combination family buyers look for.",
+]
+
+_STUDENT_RENTAL_TEMPLATES = [
+    "With {university} nearby and everyday services like {support} already established, this reads as a strong student-rental location.",
+    "{university} plus existing {support} nearby gives this plot genuine student-housing rental potential.",
+    "The combination of {university} and nearby {support} is exactly what drives consistent student rental demand.",
+]
+
+_INVESTMENT_GRADE_TEMPLATES = [
+    "With an established estate, {estate}, and real banking infrastructure like {bank} both nearby, this area already reads as investment-grade.",
+    "{estate} and {bank}, both confirmed nearby, are the kind of established-neighbourhood signals serious investors look for.",
+    "The presence of both {estate} and {bank} nearby suggests a maturing, bankable neighbourhood rather than speculative land.",
+]
+
+_COMMERCIAL_FIT_TEMPLATES = [
+    "With {retail} and {fuel} both nearby, and direct road frontage, this plot suits commercial or mixed-use development well.",
+    "{retail} and {fuel} nearby, combined with road frontage, point toward strong commercial or mixed-use potential.",
+]
+
+
+def _combined_intelligence_sentences(cell, evidence_points, estate, frontage_name, rng, max_sentences=2):
+    """Builds 0-2 synthesis sentences from combinations of already-verified
+    evidence points. Every named entry here (school/hospital/university/
+    bank/estate/retail/fuel) is looked up fresh from the real data via
+    _nearest_named on the full amenity lookup, not just the trimmed
+    evidence_points list, so a combination can fire even if one of its two
+    amenities didn't make the top-6 evidence cut. Distances are
+    deliberately omitted here (they're already stated elsewhere in the
+    description) to keep each sentence focused on the "what this combo
+    means for you" framing rather than repeating numbers."""
+    amenity_fields = _discover_amenity_fields(cell)
+    amenity_lookup = dict(amenity_fields)
+    already_named = {name for _label, name, _dist in evidence_points}
+    if estate:
+        already_named.add(estate[0])
+
+    candidates = []
+
+    school = _nearest_named(amenity_lookup, "Schools")
+    hospital = _nearest_named(amenity_lookup, "Hospitals")
+    if school and hospital:
+        candidates.append(rng.choice(_FAMILY_FIT_TEMPLATES).format(
+            school=escape(school[0]), hospital=escape(hospital[0]),
+        ))
+
+    university = _nearest_named(amenity_lookup, "Universities")
+    support = _nearest_named(amenity_lookup, "Supermarkets", "Restaurants", "Transit Stops")
+    if university and support and support[0] != (school[0] if school else None):
+        candidates.append(rng.choice(_STUDENT_RENTAL_TEMPLATES).format(
+            university=escape(university[0]), support=escape(support[0]),
+        ))
+
+    bank = _nearest_named(amenity_lookup, "Banks")
+    if estate and bank and bank[0] != estate[0]:
+        candidates.append(rng.choice(_INVESTMENT_GRADE_TEMPLATES).format(
+            estate=escape(estate[0]), bank=escape(bank[0]),
+        ))
+
+    retail = _nearest_named(amenity_lookup, "Shopping", "Supermarkets")
+    fuel = _nearest_named(amenity_lookup, "Petrol Stations")
+    if retail and fuel and frontage_name and retail[0] != fuel[0]:
+        candidates.append(rng.choice(_COMMERCIAL_FIT_TEMPLATES).format(
+            retail=escape(retail[0]), fuel=escape(fuel[0]),
+        ))
+
+    rng.shuffle(candidates)
+    return candidates[:max_sentences]
+
+
 def _build_description_html(town_label, nearest_town, frontage_name, frontage_dist,
                              evidence_points, estate, named_density,
-                             location_line=None, seed=None):
+                             location_line=None, seed=None, cell=None):
     """
     Builds the Listing Description as separate, self-contained sentences:
     distance, frontage (own sentence -- never glued to the distance
     clause), a closing accessibility line, a general services summary
     (top 4 nearest evidence points), category-specific sentences ONLY for
     evidence points beyond those top 4 (so nothing is cited twice), an
-    estate sentence, and a service-density sentence.
+    estate sentence, a service-density sentence, and -- when `cell` is
+    passed -- up to two "combined intelligence" synthesis sentences plus
+    any of the previously-unused price benchmark / air quality / flat-site
+    sentences that have real data behind them.
 
     The estate's own name is excluded from the evidence points used here
     so it isn't named in the services summary AND in its own estate
@@ -1165,6 +1549,27 @@ def _build_description_html(town_label, nearest_town, frontage_name, frontage_di
     density_sentence = _format_named_density_sentence(named_density)
     if density_sentence:
         sentences.append(density_sentence)
+
+    if cell is not None:
+        # ---- 8. Combined intelligence -- synthesis across 2+ real data points ----
+        sentences.extend(_combined_intelligence_sentences(cell, evidence_points, estate, frontage_name, rng))
+
+        # ---- 9. Previously-fetched-but-unused data, restored ----
+        price_sentence = _price_benchmark_sentence(cell, rng)
+        if price_sentence:
+            sentences.append(price_sentence)
+
+        flat_sentence = _flat_site_sentence(cell, rng)
+        if flat_sentence:
+            sentences.append(flat_sentence)
+
+        soil_sentence = _soil_climate_sentence(cell, rng)
+        if soil_sentence:
+            sentences.append(soil_sentence)
+
+        air_sentence = _air_quality_sentence(cell, rng)
+        if air_sentence:
+            sentences.append(air_sentence)
 
     if not sentences:
         fallback = escape(location_line) if location_line else "This property"
@@ -1278,6 +1683,7 @@ def render_report_pdf(pin, cell):
             town_label, nearest_town, frontage_name, frontage_dist,
             evidence_points, estate, named_density,
             location_line=location_line, seed=str(pin.id) if pin.id else None,
+            cell=cell,
         )
         if description_html is None:
             description_html = Markup(escape(

@@ -185,6 +185,31 @@ class LocationCell(models.Model):
     nearest_towns = models.JSONField(default=list, blank=True)
     nearest_towns_fetched_at = models.DateTimeField(null=True, blank=True)
 
+    # ── Soil (ISRIC SoilGrids v2.0, topsoil 0-5cm, 250m global grid) ───
+    # Free, no-key REST API -- see google_client.fetch_soil_data(). Raw
+    # values converted from SoilGrids' integer "mapped" units to the
+    # conventional units noted per field. This is a global model, NOT
+    # ground-truthed local soil survey data, so it's presented in the
+    # report as informational context, never as a definitive fertility
+    # verdict.
+    soil_ph = models.FloatField(null=True, blank=True, help_text="Topsoil (0-5cm) pH in water (phh2o), mapped value / 10.")
+    soil_organic_carbon_g_per_kg = models.FloatField(null=True, blank=True, help_text="Topsoil organic carbon (soc), mapped value / 10, in g/kg.")
+    soil_nitrogen_g_per_kg = models.FloatField(null=True, blank=True, help_text="Topsoil total nitrogen, mapped value / 100, in g/kg.")
+    soil_clay_pct = models.FloatField(null=True, blank=True, help_text="Topsoil clay content, mapped value / 10, in percent.")
+    soil_sand_pct = models.FloatField(null=True, blank=True, help_text="Topsoil sand content, mapped value / 10, in percent.")
+    soil_silt_pct = models.FloatField(null=True, blank=True, help_text="Topsoil silt content, mapped value / 10, in percent.")
+    soil_raw_response = models.JSONField(default=dict, blank=True, help_text="Full ISRIC SoilGrids properties/query response, kept for reprocessing without a re-call.")
+    soil_fetched_at = models.DateTimeField(null=True, blank=True)
+
+    # ── Climate (NASA POWER, 30-year point climatology, free/no-key) ───
+    # avg_annual_rainfall_mm is derived (ANN daily-average mm/day * 365),
+    # not a direct API field -- it's a 30-year normal, not this year's
+    # actual rainfall, and is labelled as such wherever it's printed.
+    avg_annual_rainfall_mm = models.FloatField(null=True, blank=True, help_text="Approximate average annual rainfall in mm, derived from NASA POWER's 30-year PRECTOTCORR climatology (ANN daily average x 365).")
+    avg_annual_temp_c = models.FloatField(null=True, blank=True, help_text="Average annual air temperature (deg C), NASA POWER T2M climatology, ANN value.")
+    climate_raw_response = models.JSONField(default=dict, blank=True, help_text="Full NASA POWER climatology/point response, kept for reprocessing without a re-call.")
+    climate_fetched_at = models.DateTimeField(null=True, blank=True)
+
     # ── Cache bookkeeping ──────────────────────────────────────────────
     first_queried_at = models.DateTimeField(auto_now_add=True)
     last_refreshed_at = models.DateTimeField(auto_now=True)
