@@ -175,19 +175,6 @@ def _is_notable_restaurant(name):
     return any(kw in n for kw in _NOTABLE_RESTAURANT_KEYWORDS)
 
 
-NOTABLE_SHOPPING_MIN_RATINGS = 50
-
-
-def _is_notable_shopping(entry):
-    """A mall worth naming in a listing, not just whichever shopping_mall-
-    tagged point Google happened to return closest. Google's shopping_mall
-    type also catches small plazas and arcades; user_rating_count is the
-    only signal available at fetch time for 'this is actually a landmark.'
-    """
-    count = entry.get("user_rating_count")
-    return isinstance(count, int) and count >= NOTABLE_SHOPPING_MIN_RATINGS
-
-
 def _normalize_amenity_name(name):
     if not name:
         return ""
@@ -781,13 +768,11 @@ def _collect_evidence_points(cell, max_points=6):
     lodges, inns -- via _is_notable_restaurant) so the report never cites
     an arbitrary roadside eatery as evidence.
 
-    Shopping prefers a notable mall (_is_notable_shopping) over the
-    literal nearest shopping_mall-tagged point, and that notable mall is
-    guaranteed a slot in the final capped list even if closer amenities
-    in other categories would otherwise crowd it out -- a real mall is a
-    stronger selling point than a fourth or fifth nearby pharmacy/bank/
-    petrol station, and pure-distance ranking was silently dropping it
-    from the report entirely.
+    Shopping's nearest entry -- no rating filter, any shopping_mall Google
+    returns counts -- is guaranteed a slot in the final capped list even
+    if closer amenities in other categories would otherwise crowd it out.
+    A mall is a strong selling point on its own, and pure-distance ranking
+    across categories was silently dropping it from the report entirely.
     """
     amenity_fields = dict(_discover_amenity_fields(cell))
     points = []
@@ -799,9 +784,6 @@ def _collect_evidence_points(cell, max_points=6):
             entries = [e for e in entries if _is_notable_restaurant(e.get("name"))]
             if not entries:
                 continue
-        if label == "Shopping":
-            notable = [e for e in entries if _is_notable_shopping(e)]
-            entries = notable or entries
         nearest = min(entries, key=lambda e: e.get("distance_m", float("inf")))
         name = nearest.get("name")
         distance_m = nearest.get("distance_m")
