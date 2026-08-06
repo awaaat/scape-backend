@@ -90,3 +90,47 @@ def send_milestone_paid_email(milestone):
         to_emails=[contract.client_email] + _admin_recipients(),
     )
     logger.info("Milestone paid email sent for milestone %s", milestone.id)
+
+
+def send_change_request_submitted_email(change_request):
+    contract = change_request.contract
+    _send(
+        subject=f"Change requested — {contract.title}",
+        template_name="email/contract_change_request_submitted.html",
+        context={"change_request": change_request, "contract": contract},
+        to_emails=_admin_recipients(),
+    )
+    logger.info("Change-request-submitted email sent for request %s", change_request.id)
+
+
+def send_change_request_decided_email(change_request):
+    contract = change_request.contract
+    _send(
+        subject=f"Your requested change was {change_request.status} — {contract.title}",
+        template_name="email/contract_change_request_decided.html",
+        context={"change_request": change_request, "contract": contract},
+        to_emails=[contract.client_email],
+    )
+    logger.info("Change-request-decided email sent for request %s", change_request.id)
+
+
+def send_dispute_raised_email(dispute):
+    contract = dispute.contract
+    _send(
+        subject=f"Dispute filed — {contract.title}",
+        template_name="email/contract_dispute_raised.html",
+        context={"dispute": dispute, "contract": contract},
+        to_emails=_admin_recipients(),
+    )
+    logger.info("Dispute-raised email sent for dispute %s", dispute.id)
+
+
+def send_dispute_resolved_email(dispute):
+    contract = dispute.contract
+    _send(
+        subject=f"Your dispute has been resolved — {contract.title}",
+        template_name="email/contract_dispute_resolved.html",
+        context={"dispute": dispute, "contract": contract},
+        to_emails=[contract.client_email] + _admin_recipients(),
+    )
+    logger.info("Dispute-resolved email sent for dispute %s", dispute.id)

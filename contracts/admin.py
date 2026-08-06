@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Contract, ContractRevision, Message, Milestone
+from .models import Contract, ContractChangeRequest, ContractDispute, ContractRevision, Message, Milestone
 
 
 class MilestoneInline(admin.TabularInline):
@@ -25,11 +25,29 @@ class MessageInline(admin.TabularInline):
     readonly_fields = ("created_at",)
 
 
+class ContractChangeRequestInline(admin.TabularInline):
+    model = ContractChangeRequest
+    extra = 0
+    fields = ("status", "requested_by_name", "reason", "admin_note", "reviewed_by", "created_at")
+    readonly_fields = ("status", "requested_by_name", "reason", "admin_note", "reviewed_by", "created_at")
+    can_delete = False
+    max_num = 0  # decide via services.decide_change_request() / the admin API, not by hand
+
+
+class ContractDisputeInline(admin.TabularInline):
+    model = ContractDispute
+    extra = 0
+    fields = ("status", "category", "raised_by_name", "description", "resolution_note", "created_at")
+    readonly_fields = ("status", "category", "raised_by_name", "description", "resolution_note", "created_at")
+    can_delete = False
+    max_num = 0  # resolve via services.resolve_dispute() / the admin API, not by hand
+
+
 @admin.register(Contract)
 class ContractAdmin(admin.ModelAdmin):
     list_display = (
         "title", "client_name", "client_email", "status", "total_value", "currency",
-        "sent_at", "signed_at", "created_at",
+        "has_open_dispute_flag", "sent_at", "signed_at", "created_at",
     )
     list_filter = ("status", "currency", "esign_method", "created_at")
     search_fields = ("title", "client_name", "client_email", "client_company")
@@ -39,7 +57,11 @@ class ContractAdmin(admin.ModelAdmin):
         "created_at", "updated_at",
     )
     date_hierarchy = "created_at"
-    inlines = [MilestoneInline, ContractRevisionInline, MessageInline]
+    inlines = [MilestoneInline, ContractRevisionInline, ContractChangeRequestInline, ContractDisputeInline, MessageInline]
+
+    @admin.display(boolean=True, description="Open dispute")
+    def has_open_dispute_flag(self, obj):
+        return obj.has_open_dispute
 
 
 @admin.register(Milestone)
@@ -56,3 +78,31 @@ class MessageAdmin(admin.ModelAdmin):
     list_filter = ("sender_type", "created_at")
     search_fields = ("contract__title", "contract__client_email", "body", "sender_name")
     readonly_fields = ("created_at",)
+
+
+@admin.register(ContractChangeRequest)
+class ContractChangeRequestAdmin(admin.ModelAdmin):
+    list_display = ("contract", "status", "requested_by_name", "reviewed_by", "created_at")
+    list_filter = ("status", "created_at")
+    search_fields = ("contract__title", "reason", "requested_by_name")
+    readonly_fields = (
+        "contract", "requested_by_user", "requested_by_name", "proposed_title",
+        "proposed_scope_of_work", "proposed_total_value", "proposed_currency", "reason",
+        "created_at",
+    )
+
+    def has_add_permission(self, request):
+        # Filed only by clients via the API — see services.request_contract_change().
+        return False
+
+
+@admin.register(ContractDispute)
+class ContractDisputeAdmin(admin.ModelAdmin):
+    list_display = ("contract", "status", "category", "raised_by_name", "resolved_by", "created_at")
+    list_filter = ("status", "category", "created_at")
+    search_fields = ("contract__title", "description", "raised_by_name")
+    readonly_fields = ("contract", "raised_by_user", "raised_by_name", "category", "description", "created_at")
+
+    def has_add_permission(self, request):
+        # Filed only by clients via the API — see services.raise_dispute().
+        return False

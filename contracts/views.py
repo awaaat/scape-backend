@@ -5,6 +5,10 @@ Two families of endpoints:
   - Admin (/api/contracts/...)         — IsContractStaff, full control.
   - Client (/api/contracts/client/...) — access resolved per-object via
     permissions.get_client_authorized_contract() (client_user OR token).
+
+Change requests and disputes (added) follow the same split: admins
+decide/resolve under /api/contracts/<pk>/..., clients file/view under
+/api/contracts/client/<pk>/....
 """
 import logging
 
@@ -16,12 +20,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import emails, services
-from .models import Contract, Message, Milestone
+from .models import Contract, ContractChangeRequest, ContractDispute, Message, Milestone
 from .permissions import IsContractStaff, get_client_authorized_contract
 from .serializers import (
-    ClientContractSerializer, ClientMessageCreateSerializer, ClientMilestoneSerializer,
-    ContractCreateSerializer, ContractRevisionSerializer, ContractSerializer,
-    ContractTermsUpdateSerializer, MessageSerializer, MilestoneSerializer, SignContractSerializer,
+    ChangeRequestDecisionSerializer, ClientChangeRequestCreateSerializer, ClientContractSerializer,
+    ClientDisputeCreateSerializer, ClientMessageCreateSerializer, ClientMilestoneSerializer,
+    ContractChangeRequestSerializer, ContractCreateSerializer, ContractDisputeSerializer,
+    ContractRevisionSerializer, ContractSerializer, ContractTermsUpdateSerializer,
+    DisputeResolveSerializer, MessageSerializer, MilestoneSerializer, SignContractSerializer,
 )
 
 logger = logging.getLogger("contracts")
@@ -97,6 +103,93 @@ class ContractRevisionListCreateView(APIView):
         return Response(ContractRevisionSerializer(revision).data, status=status.HTTP_201_CREATED)
 
 
+# ── Admin: Change requests ─────────────────────────────────────────────
+
+class ContractChangeRequestListView(APIView):
+    """GET /api/contracts/<pk>/change-requests/ — every change request
+    filed on this contract, newest first."""
+    permission_classes = [IsContractStaff]
+
+    def get(self, request, pk):
+        requests_qs = ContractChangeRequest.objects.filter(contract_id=pk).select_related(
+            "requested_by_user", "reviewed_by"
+        )
+        return Response(ContractChangeRequestSerializer(requests_qs, many=True).data)
+
+
+class ContractChangeRequestDecisionView(APIView):
+    """POST /api/contracts/change-requests/<pk>/decide/ — {approve: bool, admin_note?}"""
+    permission_classes = [IsContractStaff]
+
+    def post(self, request, pk):
+        try:
+            change_request = ContractChangeRequest.objects.select_related("contract").get(pk=pk)
+        except ContractChangeRequest.DoesNotExist:
+            return Response({"error": "Change request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ChangeRequestDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            change_request = services.decide_change_request(
+                change_request, approved=data["approve"], reviewed_by=request.user,
+                admin_note=data.get("admin_note", ""),
+            )
+        except services.ChangeRequestError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ContractChangeRequestSerializer(change_request).data)
+
+
+# ── Admin: Disputes ────────────────────────────────────────────────────
+
+class ContractDisputeListView(APIView):
+    """GET /api/contracts/<pk>/disputes/ — every dispute filed on this contract."""
+    permission_classes = [IsContractStaff]
+
+    def get(self, request, pk):
+        disputes = ContractDispute.objects.filter(contract_id=pk).select_related("raised_by_user", "resolved_by")
+        return Response(ContractDisputeSerializer(disputes, many=True).data)
+
+
+class AdminOpenDisputesView(APIView):
+    """GET /api/contracts/admin/disputes/open/ — every open/under-review
+    dispute across ALL contracts, for a support triage queue."""
+    permission_classes = [IsContractStaff]
+
+    def get(self, request):
+        disputes = ContractDispute.objects.filter(
+            status__in=["open", "under_review"]
+        ).select_related("contract", "raised_by_user")
+        return Response(ContractDisputeSerializer(disputes, many=True).data)
+
+
+class ContractDisputeResolveView(APIView):
+    """POST /api/contracts/disputes/<pk>/resolve/ — {status, resolution_note?}"""
+    permission_classes = [IsContractStaff]
+
+    def post(self, request, pk):
+        try:
+            dispute = ContractDispute.objects.select_related("contract").get(pk=pk)
+        except ContractDispute.DoesNotExist:
+            return Response({"error": "Dispute not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = DisputeResolveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            dispute = services.resolve_dispute(
+                dispute, new_status=data["status"], resolved_by=request.user,
+                resolution_note=data.get("resolution_note", ""),
+            )
+        except services.DisputeError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ContractDisputeSerializer(dispute).data)
+
+
 # ── Admin: Milestones ─────────────────────────────────────────────────
 
 class MilestoneListCreateView(generics.ListCreateAPIView):
@@ -117,7 +210,9 @@ class MilestoneDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class MilestoneInvoiceView(APIView):
-    """POST /api/contracts/milestones/<pk>/invoice/ — starts the Paystack checkout for this milestone."""
+    """POST /api/contracts/milestones/<pk>/invoice/ — starts the Paystack checkout for this milestone.
+    Blocked automatically if the contract has an open dispute — see
+    services.initiate_milestone_payment."""
     permission_classes = [IsContractStaff]
 
     def post(self, request, pk):
@@ -264,3 +359,76 @@ class ClientMarkMessagesReadView(APIView):
         unread = contract.messages.filter(sender_type="admin", read_by_client_at__isnull=True)
         count = unread.update(read_by_client_at=timezone.now())
         return Response({"marked_read": count})
+
+
+# ── Client: Change requests ────────────────────────────────────────────
+
+class ClientChangeRequestListCreateView(APIView):
+    """
+    GET  /api/contracts/client/<pk>/change-requests/ — the client's own
+    view of every change request filed on this contract.
+    POST /api/contracts/client/<pk>/change-requests/ — propose a change.
+    """
+
+    def get(self, request, pk):
+        contract = get_client_authorized_contract(request, pk)
+        requests_qs = contract.change_requests.all()
+        return Response(ContractChangeRequestSerializer(requests_qs, many=True).data)
+
+    def post(self, request, pk):
+        contract = get_client_authorized_contract(request, pk)
+
+        serializer = ClientChangeRequestCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        user = request.user if request.user and request.user.is_authenticated else None
+        sender_name = data.get("sender_name") or (user.get_username() if user else contract.client_name)
+
+        try:
+            change_request = services.request_contract_change(
+                contract, requested_by_user=user, requested_by_name=sender_name,
+                reason=data["reason"], proposed_title=data.get("proposed_title"),
+                proposed_scope_of_work=data.get("proposed_scope_of_work"),
+                proposed_total_value=data.get("proposed_total_value"),
+                proposed_currency=data.get("proposed_currency"),
+            )
+        except services.ChangeRequestError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ContractChangeRequestSerializer(change_request).data, status=status.HTTP_201_CREATED)
+
+
+# ── Client: Disputes ──────────────────────────────────────────────────
+
+class ClientDisputeListCreateView(APIView):
+    """
+    GET  /api/contracts/client/<pk>/disputes/ — the client's own view of
+    every dispute filed on this contract.
+    POST /api/contracts/client/<pk>/disputes/ — file a new dispute.
+    """
+
+    def get(self, request, pk):
+        contract = get_client_authorized_contract(request, pk)
+        disputes = contract.disputes.all()
+        return Response(ContractDisputeSerializer(disputes, many=True).data)
+
+    def post(self, request, pk):
+        contract = get_client_authorized_contract(request, pk)
+
+        serializer = ClientDisputeCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        user = request.user if request.user and request.user.is_authenticated else None
+        sender_name = data.get("sender_name") or (user.get_username() if user else contract.client_name)
+
+        try:
+            dispute = services.raise_dispute(
+                contract, category=data["category"], description=data["description"],
+                raised_by_user=user, raised_by_name=sender_name,
+            )
+        except services.DisputeError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ContractDisputeSerializer(dispute).data, status=status.HTTP_201_CREATED)

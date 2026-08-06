@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "payments",
     "users",
     "contracts",
+    "projects",  # ← NEW: client project submission + real-time messaging
     "channels",
     "rest_framework_simplejwt.token_blacklist",
 ]
@@ -90,7 +91,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 ASGI_APPLICATION = "backend.asgi.application"
 
-# ─── Channels (websockets — contracts live messaging) ───────────────
+# ─── Channels (websockets — contracts + projects live messaging) ────
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
@@ -138,11 +139,15 @@ STORAGES = {
     },
 }
 
-# ─── Media files (resume uploads) ────────────────────────────────────
+# ─── Media files (resume uploads, contract docs, project attachments) ─
 # Local disk for now. NOTE: Render's filesystem is ephemeral — anything
 # written here is wiped on every deploy/restart unless a persistent
 # Disk add-on is attached to the service. Fine for local dev; revisit
-# before relying on this in production.
+# before relying on this in production. (property_intel already moved
+# its own uploads to Supabase Storage for exactly this reason — see
+# property_intel/storage.py. contracts/signed docs and projects/
+# attachments have NOT been moved yet; same ephemeral-disk risk applies
+# to both until they are.)
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -206,6 +211,8 @@ REST_FRAMEWORK = {
         "property_pin": "20/minute",
         "property_otp": "5/minute",
         "payments_initialize": "10/minute",
+        "project_submit": "10/minute",    # ← NEW: throttles POST /api/projects/
+        "project_message": "60/minute",   # ← NEW: throttles project message-send endpoints
     },
 }
 
@@ -237,6 +244,8 @@ LOGGING = {
         "leads": {"level": "INFO", "propagate": True},
         "enrichment": {"level": "INFO", "propagate": True},
         "jobs": {"level": "INFO", "propagate": True},
+        "contracts": {"level": "INFO", "propagate": True},
+        "projects": {"level": "INFO", "propagate": True},  # ← NEW
     },
 }
 # ─── Gmail SMTP (resume attachments ONLY — separate from Brevo) ─────
@@ -309,6 +318,18 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
 }
+
+# ─── Projects app (client-submitted work requests) ──────────────────
+# Max size for a single project attachment upload, enforced in
+# projects/serializers.py before it's ever sent to storage.
+PROJECT_ATTACHMENT_MAX_SIZE_MB = env.int("PROJECT_ATTACHMENT_MAX_SIZE_MB", default=15)
+
+# Supabase bucket project attachments are uploaded to (see
+# projects/storage.py). Separate from SUPABASE_STORAGE_BUCKET
+# (property_intel's bucket) so the two apps' files don't mix. Create
+# this bucket in your Supabase project (Storage → New bucket → public)
+# before shipping — uploads will fail with a clear 502 until it exists.
+PROJECTS_STORAGE_BUCKET = env("PROJECTS_STORAGE_BUCKET", default="project-attachments")
 
 # Emails that skip fingerprinting/fraud scoring/payment entirely and get
 # unlimited free reports. Comma-separated in env; falls back to a default

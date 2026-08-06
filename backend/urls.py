@@ -18,6 +18,9 @@ def api_root(request):
             "/api/exit-intent/",
             "/api/track-visit/",
             "/api/jobs/",
+            "/api/contracts/",
+            "/api/projects/",
+            "/api/users/",
         ],
     })
 
@@ -33,6 +36,7 @@ urlpatterns = [
     path("api/", include("property_intel.urls")),   # add this
     path("api/", include("payments.urls")),
     path("api/", include("contracts.urls")),
+    path("api/", include("projects.urls")),         # ← NEW
     path("api/users/", include("users.urls")),
 ]
 if settings.DEBUG:

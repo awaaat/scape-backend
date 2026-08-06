@@ -16,6 +16,26 @@ Payments reuse payments.PaystackTransaction exactly the way
 property_intel does: Milestone stores only the opaque `reference`
 string, never a FK into payments — that app has zero knowledge of its
 callers by design (see payments/models.py), and this keeps it that way.
+
+── Client change requests + disputes (added) ────────────────────────
+Two new models, matching how a real marketplace (Upwork, etc.) treats
+a signed-or-negotiating agreement: neither party can silently rewrite
+or delete it.
+
+  - ContractChangeRequest: the ONLY way a client can propose a change
+    to negotiable terms. A request sits at "pending" until an admin
+    approves (which applies it via the existing record_contract_revision
+    — same audit trail negotiation already uses) or rejects it. There
+    is no client-side edit/delete of the contract itself, on purpose.
+
+  - ContractDispute: a client-filed dispute against the whole contract.
+    While one is open (status "open" or "under_review"),
+    Contract.has_open_dispute is True, which
+    services.initiate_milestone_payment() checks and refuses to start
+    or resume ANY milestone invoice/checkout for that contract —
+    billing is frozen contract-wide until an admin resolves it. This
+    is the one behavioral change to existing milestone-payment code;
+    everything else in this file is additive.
 """
 import hashlib
 import hmac
@@ -45,6 +65,12 @@ ESIGN_METHOD_CHOICES = [
     ("self_built", "Self-built"),
     ("third_party", "Third-party"),
 ]
+
+# Statuses in which a client is allowed to propose a change to
+# negotiable terms — mirrors the states record_contract_revision
+# already treats as "still being negotiated." Once signed, a change
+# needs a real addendum/new contract, not a silent edit.
+CHANGE_REQUEST_ELIGIBLE_STATUSES = {"sent", "negotiating"}
 
 
 class Contract(models.Model):
@@ -180,6 +206,17 @@ class Contract(models.Model):
         self.sent_at = timezone.now()
         self.save(update_fields=["status", "sent_at"])
 
+    def is_change_request_eligible(self):
+        return self.status in CHANGE_REQUEST_ELIGIBLE_STATUSES
+
+    @property
+    def has_open_dispute(self):
+        """Checked by services.initiate_milestone_payment() before every
+        invoice/checkout attempt — the single point where a dispute
+        actually freezes money movement. A property (not cached) so it's
+        always correct even if a dispute was just resolved this request."""
+        return self.disputes.filter(status__in=["open", "under_review"]).exists()
+
 
 class ContractRevision(models.Model):
     """
@@ -309,3 +346,126 @@ class Message(models.Model):
         if not self.read_by_client_at:
             self.read_by_client_at = timezone.now()
             self.save(update_fields=["read_by_client_at"])
+
+
+# ── Client change requests ─────────────────────────────────────────────
+
+CHANGE_REQUEST_STATUS_CHOICES = [
+    ("pending", "Pending"),
+    ("approved", "Approved"),
+    ("rejected", "Rejected"),
+    ("withdrawn", "Withdrawn"),
+]
+
+
+class ContractChangeRequest(models.Model):
+    """
+    THE only way a client can propose a change to a contract's
+    negotiable terms — never a direct edit. Written by
+    services.request_contract_change(); decided by
+    services.decide_change_request(), which — if approved — applies the
+    change through the EXISTING record_contract_revision() so it lands
+    in the same ContractRevision audit trail an admin-initiated edit
+    would, indistinguishable in history except for edited_by.
+    """
+    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name="change_requests")
+
+    # Same dual-identity pattern as Message.sender_user/sender_name —
+    # covers a client with a real account AND a no-login token client.
+    requested_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="contract_change_requests",
+    )
+    requested_by_name = models.CharField(max_length=150, blank=True)
+
+    # Only the fields actually being proposed are set — null means "no
+    # change requested to this field." Same nullable-partial-update
+    # shape as ContractTermsUpdateSerializer already uses for admin edits.
+    proposed_title = models.CharField(max_length=255, blank=True)
+    proposed_scope_of_work = models.TextField(blank=True)
+    proposed_total_value = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    proposed_currency = models.CharField(max_length=3, blank=True)
+
+    reason = models.TextField(help_text="Client's explanation for the requested change.")
+
+    status = models.CharField(max_length=20, choices=CHANGE_REQUEST_STATUS_CHOICES, default="pending", db_index=True)
+    admin_note = models.TextField(blank=True, help_text="Set by the admin when approving or rejecting.")
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="contract_change_requests_reviewed",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.contract_id} change request ({self.status})"
+
+
+# ── Client disputes ─────────────────────────────────────────────────────
+
+DISPUTE_STATUS_CHOICES = [
+    ("open", "Open"),
+    ("under_review", "Under review"),
+    ("resolved_client_favor", "Resolved — client favor"),
+    ("resolved_provider_favor", "Resolved — provider favor"),
+    ("resolved_mutual", "Resolved — mutual agreement"),
+    ("withdrawn", "Withdrawn"),
+]
+
+DISPUTE_STATUS_OPEN = {"open", "under_review"}
+
+DISPUTE_CATEGORY_CHOICES = [
+    ("deliverable_not_as_described", "Deliverable not as described"),
+    ("missed_deadline", "Missed deadline"),
+    ("payment_issue", "Payment issue"),
+    ("communication_issue", "Communication issue"),
+    ("other", "Other"),
+]
+
+
+class ContractDispute(models.Model):
+    """
+    A client-filed dispute against the whole contract. While status is
+    "open" or "under_review", Contract.has_open_dispute is True, which
+    freezes ALL milestone invoicing/checkout on this contract (see
+    services.initiate_milestone_payment) until an admin resolves it —
+    the actual "billing freeze" behavior, enforced in one place.
+    Written by services.raise_dispute() / services.resolve_dispute(),
+    never edited directly.
+    """
+    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name="disputes")
+
+    raised_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="contract_disputes",
+    )
+    raised_by_name = models.CharField(max_length=150, blank=True)
+
+    category = models.CharField(max_length=40, choices=DISPUTE_CATEGORY_CHOICES, default="other")
+    description = models.TextField()
+
+    status = models.CharField(max_length=30, choices=DISPUTE_STATUS_CHOICES, default="open", db_index=True)
+    resolution_note = models.TextField(blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="contract_disputes_resolved",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.contract_id} dispute ({self.status})"
+
+    def is_open(self):
+        return self.status in DISPUTE_STATUS_OPEN
