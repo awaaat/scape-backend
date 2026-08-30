@@ -27,3 +27,6 @@ channels-redis==4.2.0
 daphne==4.1.2
 earthengine-api
 osmnx
+scipy
+numpy
+scikit-learn
