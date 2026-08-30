@@ -1,3 +1,4 @@
+
 """
 payments/views.py
 
@@ -31,6 +32,22 @@ from .serializers import InitializeTransactionSerializer, PaystackTransactionSer
 from .wallet_signals import WALLET_TOPUP_PURPOSE
 
 logger = logging.getLogger("payments")
+
+
+def wallet_currency_for_user(user):
+    """
+    KE -> KES, everything else -> USD. Reads users.UserSignup.country via
+    the user's signup_profile — payments has zero import-time dependency
+    on the users app (same "no cross-app FKs" rule as the rest of this
+    app, see models.py's module docstring), so this is a lazy import and
+    a soft fallback: a user with no signup_profile at all (shouldn't
+    normally happen — SignupView always creates one) defaults to KES
+    rather than raising, since KES was this app's only currency before
+    multi-currency existed.
+    """
+    signup = getattr(user, "signup_profile", None)
+    country = getattr(signup, "country", "KE") or "KE"
+    return "KES" if country.upper() == "KE" else "USD"
 
 
 class InitializeTransactionView(APIView):
@@ -174,7 +191,16 @@ class WalletTopUpView(APIView):
     POST /api/payments/wallet/topup/ — starts a Paystack checkout to add
     funds to the logged-in user's wallet balance, completely independent
     of buying any specific report. On confirmation, wallet_signals.py's
-    relay_wallet_topup receiver credits UserWallet.balance.
+    relay_wallet_topup receiver credits the matching currency balance on
+    UserWallet.
+
+    Currency is NOT client-supplied — it's derived from the user's own
+    users.UserSignup.country (KE -> KES, anything else -> USD). Taking it
+    from the request body instead would let anyone credit whichever
+    balance they liked regardless of what they were actually charged in;
+    deriving it from a value set once at registration keeps "what
+    currency did this person pay in" and "which balance gets credited"
+    tied to the same source of truth.
 
     Body: { "amount": "500.00" }
     Returns: same shape as InitializeTransactionView (includes checkout_url).
@@ -190,11 +216,13 @@ class WalletTopUpView(APIView):
         if amount <= 0:
             return Response({"error": "Amount must be greater than zero."}, status=status.HTTP_400_BAD_REQUEST)
 
+        currency = wallet_currency_for_user(request.user)
+
         try:
             txn = services.initialize_transaction(
                 email=request.user.email,
                 amount=amount,
-                currency="KES",
+                currency=currency,
                 purpose=WALLET_TOPUP_PURPOSE,
                 external_reference=f"topup-{request.user.pk}-{uuid.uuid4().hex[:12]}",
                 callback_url=request.data.get("callback_url", ""),
@@ -204,3 +232,4 @@ class WalletTopUpView(APIView):
             return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
         return Response(PaystackTransactionSerializer(txn).data, status=status.HTTP_201_CREATED)
+

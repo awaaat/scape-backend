@@ -9,15 +9,18 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from . import storage
 from .emails import send_password_reset_email, send_verification_email, send_welcome_email
 from .models import UserSignup
 from .serializers import (
     ChangePasswordSerializer,
+    DeleteAccountSerializer,
     EmailVerificationConfirmSerializer,
     EmailVerificationRequestSerializer,
     LoginSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    ProfileUpdateSerializer,
     UserSignupCreateSerializer,
     UserSignupReadSerializer,
 )
@@ -127,7 +130,10 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    """GET /api/users/me/ — requires a valid access token."""
+    """GET /api/users/me/ — requires a valid access token.
+    PATCH /api/users/me/ — edit full_name/phone (email is intentionally
+    not editable here; changing it would need re-verification, out of
+    scope for this pass)."""
 
     permission_classes = [IsAuthenticated]
 
@@ -136,6 +142,84 @@ class MeView(APIView):
         if signup is None:
             return Response({"detail": "No profile found for this account."}, status=status.HTTP_404_NOT_FOUND)
         return Response(UserSignupReadSerializer(signup).data)
+
+    def patch(self, request):
+        signup = getattr(request.user, "signup_profile", None)
+        if signup is None:
+            return Response({"detail": "No profile found for this account."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ProfileUpdateSerializer(instance=signup, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        for field, value in serializer.validated_data.items():
+            setattr(signup, field, value)
+        signup.save(update_fields=list(serializer.validated_data.keys()) + ["updated_at"])
+
+        # first_name on the auth user backs Overview's greeting — keep it
+        # in sync so "Hi, {first name}" doesn't go stale after a rename.
+        if "full_name" in serializer.validated_data:
+            request.user.first_name = serializer.validated_data["full_name"].split(" ")[0]
+            request.user.save(update_fields=["first_name"])
+
+        return Response(UserSignupReadSerializer(signup).data)
+
+
+class AvatarUploadView(APIView):
+    """POST /api/users/me/avatar/ — multipart, field name "avatar".
+    Uploads via users/storage.py (Supabase), overwriting any existing one."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        signup = getattr(request.user, "signup_profile", None)
+        if signup is None:
+            return Response({"detail": "No profile found for this account."}, status=status.HTTP_404_NOT_FOUND)
+
+        uploaded_file = request.FILES.get("avatar")
+        if uploaded_file is None:
+            return Response({"detail": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            avatar_url = storage.upload_avatar(uploaded_file, signup.user_id)
+        except storage.InvalidAvatarUpload as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except storage.StorageUploadFailed:
+            return Response({"detail": "Couldn't upload that image right now — try again shortly."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        signup.avatar_url = avatar_url
+        signup.save(update_fields=["avatar_url", "updated_at"])
+        return Response(UserSignupReadSerializer(signup).data)
+
+
+class AccountDeleteView(APIView):
+    """POST /api/users/me/delete/ — body: {password}. Soft-delete: the
+    auth user is deactivated (can never log in again) and the profile
+    is deactivated + anonymized, rather than hard-deleted — same
+    "untick is_active rather than destroy the row" reasoning as
+    UserSignup.is_active's own help_text, and it keeps FK integrity
+    intact for anything referencing this user (contracts.client_user
+    etc. are all on_delete=SET_NULL, but a hard delete would still
+    orphan historical records unnecessarily)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = DeleteAccountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        if not user.check_password(serializer.validated_data["password"]):
+            return Response({"detail": "Incorrect password."}, status=status.HTTP_400_BAD_REQUEST)
+
+        signup = getattr(user, "signup_profile", None)
+        if signup is not None:
+            signup.is_active = False
+            signup.save(update_fields=["is_active", "updated_at"])
+
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+
+        return Response(status=status.HTTP_205_RESET_CONTENT)
 
 
 class PasswordResetRequestView(APIView):

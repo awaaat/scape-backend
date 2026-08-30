@@ -32,6 +32,13 @@ def relay_wallet_topup(sender, reference, purpose, external_reference, amount, c
 
 @receiver(wallet_topup_succeeded)
 def credit_user_wallet(sender, user_email, amount, currency, reference, **kwargs):
+    """
+    Credits the balance matching `currency` — never converts. `currency`
+    here is whatever WalletTopUpView told Paystack to charge in (derived
+    from the payer's country at initialize time), so crediting it as-is
+    keeps "what they paid" and "what got credited" the same number in the
+    same currency, with no FX rate anywhere in this path.
+    """
     try:
         user = User.objects.get(email__iexact=user_email)
     except User.DoesNotExist:
@@ -39,13 +46,26 @@ def credit_user_wallet(sender, user_email, amount, currency, reference, **kwargs
         return
 
     wallet = UserWallet.get_or_create_for_user(user)
-    wallet.credit(amount)
+    try:
+        wallet.credit(amount, currency=currency)
+    except ValueError:
+        # Unsupported/garbled currency string somehow reached here —
+        # shouldn't happen since WalletTopUpView only ever sends KES or
+        # USD, but better to log loudly and not silently credit the wrong
+        # balance than to guess.
+        logger.error(
+            "wallet topup: unsupported currency %r for user %s (ref %s) — not credited",
+            currency, user_email, reference,
+        )
+        return
+
     WalletTransaction.objects.create(
         wallet=wallet,
         transaction_type="topup",
+        currency=currency,
         amount=amount,
-        balance_after=wallet.balance,
+        balance_after=wallet.get_balance(currency),
         reference=reference,
         note=f"Paystack topup {currency} {amount}",
     )
-    logger.info("Wallet credited KES %s for user %s (ref %s)", amount, user_email, reference)
+    logger.info("Wallet credited %s %s for user %s (ref %s)", currency, amount, user_email, reference)

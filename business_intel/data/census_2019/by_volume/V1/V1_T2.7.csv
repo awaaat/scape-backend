@@ -1,0 +1,397 @@
+County,SubCounty,AdminArea,Population,LandArea(in Sq. Km),Population Density(No. per Sq. Km)
+xxx,Total,xxx,47564296.0,580876.3,82.0
+Mombasa County,Mombasa,County,1208333.0,219.9,5495.0
+Mombasa County,Changamwe,SubCounty,131882.0,17.7,7457.0
+Mombasa County,Jomvu,SubCounty,163415.0,36.9,4432.0
+Mombasa County,Kisauni,SubCounty,291930.0,87.7,3328.0
+Mombasa County,Likoni,SubCounty,250358.0,40.5,6187.0
+Mombasa County,Mvita,SubCounty,154171.0,14.6,10543.0
+Mombasa County,Nyali,SubCounty,216577.0,22.5,9610.0
+Kwale County,Kwale,County,866820.0,8267.1,105.0
+Kwale County,Kinango,SubCounty,94220.0,1614.0,58.0
+Kwale County,Lungalunga,SubCounty,198423.0,2765.2,72.0
+Kwale County,Matuga,SubCounty,194252.0,1032.4,188.0
+Kwale County,Msambweni,SubCounty,177690.0,411.7,432.0
+Kwale County,Samburu-Kwale,SubCounty,202235.0,2443.7,83.0
+Kilifi County,Kilifi,County,1453787.0,12539.7,116.0
+Kilifi County,Chonyi,SubCounty,62335.0,192.6,324.0
+Kilifi County,Ganze,SubCounty,143906.0,3204.4,45.0
+Kilifi County,Kaloleni,SubCounty,193682.0,706.1,274.0
+Kilifi County,Kauma,SubCounty,22638.0,181.4,125.0
+Kilifi County,Kilifi North,SubCounty,178824.0,264.4,676.0
+Kilifi County,Kilifi South,SubCounty,206753.0,290.5,712.0
+Kilifi County,Magarini,SubCounty,191610.0,5229.4,37.0
+Kilifi County,Malindi,SubCounty,333226.0,2263.3,147.0
+Kilifi County,Rabai,SubCounty,120813.0,207.8,581.0
+Tana River County,Tana River,County,315943.0,37950.5,8.0
+Tana River County,Tana North,SubCounty,110640.0,15478.7,7.0
+Tana River County,Tana Delta,SubCounty,116757.0,13306.1,9.0
+Tana River County,Tana River,SubCounty,88546.0,9165.6,10.0
+Lamu County,Lamu,County,143920.0,6253.3,23.0
+Lamu County,Lamu East,SubCounty,22258.0,2336.7,10.0
+Lamu County,Lamu West,SubCounty,121662.0,3916.6,31.0
+Taita/Taveta County,Taita/Taveta,County,340671.0,17152.0,20.0
+Taita/Taveta County,Mwatate,SubCounty,81659.0,2722.6,30.0
+Taita/Taveta County,Taita,SubCounty,55959.0,477.9,117.0
+Taita/Taveta County,Taveta,SubCounty,91222.0,6398.7,14.0
+Taita/Taveta County,Voi,SubCounty,111831.0,7552.8,15.0
+Garissa County,Garissa,County,841353.0,44736.0,19.0
+Garissa County,Balambala,SubCounty,32257.0,3684.1,9.0
+Garissa County,Dadaab,SubCounty,185252.0,6479.8,29.0
+Garissa County,Fafi,SubCounty,134040.0,15072.9,9.0
+Garissa County,Garissa,SubCounty,163914.0,3230.7,51.0
+Garissa County,Hulugho,SubCounty,133984.0,7733.2,17.0
+Garissa County,Ijara,SubCounty,141591.0,2438.9,58.0
+Garissa County,Lagdera,SubCounty,50315.0,6096.4,8.0
+Wajir County,Wajir,County,781263.0,56773.1,14.0
+Wajir County,Buna,SubCounty,49886.0,3892.8,13.0
+Wajir County,Eldas,SubCounty,88509.0,4444.0,20.0
+Wajir County,Habaswein,SubCounty,174134.0,10912.5,16.0
+Wajir County,Tarbaj,SubCounty,57232.0,9650.9,6.0
+Wajir County,Wajir East,SubCounty,110654.0,4055.1,27.0
+Wajir County,Wajir North,SubCounty,62206.0,4042.9,15.0
+Wajir County,Wajir South,SubCounty,116814.0,10732.6,11.0
+Wajir County,Wajir West,SubCounty,121828.0,9042.3,13.0
+Mandera County,Mandera,County,867457.0,25939.8,33.0
+Mandera County,Mandera West,SubCounty,98300.0,4016.9,24.0
+Mandera County,Banisa,SubCounty,152598.0,3942.7,39.0
+Mandera County,Kutulo,SubCounty,72394.0,2509.3,29.0
+Mandera County,Lafey,SubCounty,83457.0,3846.3,22.0
+Mandera County,Mandera Central,SubCounty,157220.0,4031.6,39.0
+Mandera County,Mandera East,SubCounty,159638.0,2505.7,64.0
+Mandera County,Mandera North,SubCounty,143850.0,5087.3,28.0
+Marsabit County,Marsabit,County,459785.0,70944.1,6.0
+Marsabit County,Loiyangalani,SubCounty,35713.0,11789.2,3.0
+Marsabit County,Marsabit Central,SubCounty,79181.0,2142.8,37.0
+Marsabit County,Marsabit North,SubCounty,54297.0,19836.8,3.0
+Marsabit County,Marsabit South,SubCounty,65376.0,8447.4,8.0
+Marsabit County,Moyale,SubCounty,108949.0,3395.5,32.0
+Marsabit County,North Horr,SubCounty,71447.0,19336.7,4.0
+Marsabit County,Sololo,SubCounty,44822.0,5995.6,7.0
+Isiolo County,Isiolo,County,268002.0,25350.6,11.0
+Isiolo County,Garbatulla,SubCounty,99730.0,9902.0,10.0
+Isiolo County,Isiolo,SubCounty,121066.0,2691.3,45.0
+Isiolo County,Merti,SubCounty,47206.0,12757.3,4.0
+Meru County,Meru,County,1545714.0,7006.3,221.0
+Meru County,Buuri East,SubCounty,76598.0,332.9,230.0
+Meru County,Buuri West,SubCounty,80762.0,638.7,126.0
+Meru County,Igembe Central,SubCounty,221412.0,604.1,366.0
+Meru County,Igembe North,SubCounty,169317.0,1076.9,157.0
+Meru County,Igembe South,SubCounty,161646.0,255.2,633.0
+Meru County,Imenti North,SubCounty,177567.0,230.8,769.0
+Meru County,Imenti South,SubCounty,206506.0,413.9,499.0
+Meru County,Meru Central,SubCounty,133818.0,381.8,350.0
+Meru County,Tigania Central,SubCounty,104730.0,237.4,441.0
+Meru County,Tigania East,SubCounty,72549.0,507.9,143.0
+Meru County,Tigania West,SubCounty,139961.0,398.6,351.0
+Meru County,Meru National Park*,Special Area,385.0,868.1,0.0
+Meru County,Mt Kenya Forest*,Special Area,463.0,1059.9,0.0
+Tharaka-Nithi County,Tharaka-Nithi,County,393177.0,2564.4,153.0
+Tharaka-Nithi County,Igambang'ombe,SubCounty,53210.0,324.6,164.0
+Tharaka-Nithi County,Maara,SubCounty,114894.0,265.1,433.0
+Tharaka-Nithi County,Meru South,SubCounty,91080.0,138.8,656.0
+Tharaka-Nithi County,Tharaka North,SubCounty,58345.0,838.8,70.0
+Tharaka-Nithi County,Tharaka South,SubCounty,75250.0,637.0,118.0
+Tharaka-Nithi County,Mt Kenya Forest*,Special Area,398.0,360.1,1.0
+Embu County,Embu,County,608599.0,2820.7,216.0
+Embu County,Embu East,SubCounty,129564.0,253.3,512.0
+Embu County,Embu North,SubCounty,79556.0,110.6,719.0
+Embu County,Embu West,SubCounty,127100.0,158.1,804.0
+Embu County,Mbeere South,SubCounty,163476.0,1312.1,125.0
+Embu County,Mbeere North,SubCounty,108881.0,783.6,139.0
+Embu County,Mt Kenya Forest*,Special Area,22.0,203.0,0.0
+Kitui County,Kitui,County,1136187.0,30429.5,37.0
+Kitui County,Ikutha,SubCounty,82964.0,9033.1,9.0
+Kitui County,Katulani,SubCounty,47108.0,323.7,146.0
+Kitui County,Kisasi,SubCounty,46142.0,294.6,157.0
+Kitui County,Kitui Central,SubCounty,105991.0,421.8,251.0
+Kitui County,Kitui West,SubCounty,70871.0,416.4,170.0
+Kitui County,Kyuso,SubCounty,76867.0,2524.5,30.0
+Kitui County,Lower Yatta,SubCounty,63329.0,1191.0,53.0
+Kitui County,Matinyani,SubCounty,47811.0,264.2,181.0
+Kitui County,Migwani,SubCounty,79255.0,634.5,125.0
+Kitui County,Mumoni,SubCounty,29344.0,611.4,48.0
+Kitui County,Mutitu,SubCounty,55287.0,5359.8,10.0
+Kitui County,Mutitu North,SubCounty,21215.0,548.3,39.0
+Kitui County,Mutomo,SubCounty,113356.0,2202.9,51.0
+Kitui County,Mwingi Central,SubCounty,108713.0,1146.4,95.0
+Kitui County,Mwingi East,SubCounty,85139.0,3418.5,25.0
+Kitui County,Nzambani,SubCounty,46788.0,319.7,146.0
+Kitui County,Thagicu,SubCounty,15136.0,362.7,42.0
+Kitui County,Tseikuru,SubCounty,40871.0,1356.0,30.0
+Machakos County,Machakos,County,1421932.0,6042.7,235.0
+Machakos County,Athi River,SubCounty,322499.0,827.2,390.0
+Machakos County,Kalama,SubCounty,54462.0,487.2,112.0
+Machakos County,Kangundo,SubCounty,97917.0,172.7,567.0
+Machakos County,Kathiani,SubCounty,111890.0,205.6,544.0
+Machakos County,Machakos,SubCounty,170606.0,280.2,609.0
+Machakos County,Masinga,SubCounty,148522.0,1405.7,106.0
+Machakos County,Matungulu,SubCounty,161557.0,581.4,278.0
+Machakos County,Mwala,SubCounty,181896.0,1020.3,178.0
+Machakos County,Yatta,SubCounty,172583.0,1062.4,162.0
+Makueni County,Makueni,County,987653.0,8169.8,121.0
+Makueni County,Kathonzweni,SubCounty,79780.0,880.7,91.0
+Makueni County,Kibwezi,SubCounty,197000.0,3137.4,63.0
+Makueni County,Kilungu,SubCounty,60952.0,154.3,395.0
+Makueni County,Makindu,SubCounty,84946.0,852.1,100.0
+Makueni County,Makueni,SubCounty,130375.0,609.3,214.0
+Makueni County,Mbooni East,SubCounty,97756.0,686.5,142.0
+Makueni County,Mbooni West,SubCounty,102594.0,270.7,379.0
+Makueni County,Mukaa,SubCounty,107549.0,803.7,134.0
+Makueni County,Nzaui,SubCounty,126701.0,775.2,163.0
+Nyandarua County,Nyandarua,County,638289.0,3285.7,194.0
+Nyandarua County,Kinangop,SubCounty,111410.0,293.6,379.0
+Nyandarua County,Nyandarua South,SubCounty,93870.0,313.6,299.0
+Nyandarua County,Mirangine,SubCounty,67214.0,245.6,274.0
+Nyandarua County,Kipipiri,SubCounty,93855.0,456.3,206.0
+Nyandarua County,Nyandarua Central,SubCounty,75262.0,346.6,217.0
+Nyandarua County,Nyandarua West,SubCounty,97965.0,384.9,255.0
+Nyandarua County,Nyandarua North,SubCounty,98698.0,528.4,187.0
+Nyandarua County,Aberdare National Park*,Special Area,15.0,716.7,0.0
+Nyeri County,Nyeri,County,759164.0,3325.0,228.0
+Nyeri County,Tetu,SubCounty,80453.0,216.5,372.0
+Nyeri County,Kieni East,SubCounty,110376.0,448.7,246.0
+Nyeri County,Kieni West,SubCounty,88525.0,517.8,171.0
+Nyeri County,Mathira East,SubCounty,99065.0,130.4,760.0
+Nyeri County,Mathira West,SubCounty,59895.0,162.3,369.0
+Nyeri County,Nyeri South,SubCounty,91081.0,169.2,538.0
+Nyeri County,Mukurwe-ini,SubCounty,89137.0,179.1,498.0
+Nyeri County,Nyeri Central,SubCounty,140338.0,167.6,837.0
+Nyeri County,Mt Kenya Forest*,Special Area,188.0,611.4,0.0
+Nyeri County,Aberdare Forest*,Special Area,106.0,722.0,0.0
+Kirinyaga County,Kirinyaga,County,610411.0,1478.3,413.0
+Kirinyaga County,Kirinyaga Central,SubCounty,122740.0,153.3,800.0
+Kirinyaga County,Kirinyaga East,SubCounty,135559.0,231.8,585.0
+Kirinyaga County,Kirinyaga West,SubCounty,114660.0,207.8,552.0
+Kirinyaga County,Mwea East,SubCounty,132554.0,303.0,437.0
+Kirinyaga County,Mwea West,SubCounty,104828.0,239.4,438.0
+Kirinyaga County,Mt Kenya Forest*,Special Area,70.0,343.0,0.0
+Murang'a County,Murang'a,County,1056640.0,2524.2,419.0
+Murang'a County,Murang'a East,SubCounty,110311.0,240.8,458.0
+Murang'a County,Kangema,SubCounty,80447.0,173.7,463.0
+Murang'a County,Mathioya,SubCounty,92814.0,177.5,523.0
+Murang'a County,Kahuro,SubCounty,88193.0,169.4,521.0
+Murang'a County,Murang'a South,SubCounty,184824.0,456.9,405.0
+Murang'a County,Gatanga,SubCounty,187989.0,532.3,353.0
+Murang'a County,Kigumo,SubCounty,136921.0,244.2,561.0
+Murang'a County,Kandara,SubCounty,175098.0,234.6,746.0
+Murang'a County,Aberdare Forest*,Special Area,43.0,294.7,0.0
+Kiambu County,Kiambu,County,2417735.0,2538.6,952.0
+Kiambu County,Gatundu North,SubCounty,109870.0,285.9,384.0
+Kiambu County,Gatundu South,SubCounty,122103.0,193.6,631.0
+Kiambu County,Githunguri,SubCounty,165232.0,174.4,948.0
+Kiambu County,Juja,SubCounty,300948.0,342.0,880.0
+Kiambu County,Kabete,SubCounty,199653.0,60.7,3289.0
+Kiambu County,Kiambaa,SubCounty,236400.0,91.1,2595.0
+Kiambu County,Kiambu,SubCounty,145903.0,98.3,1484.0
+Kiambu County,Kikuyu,SubCounty,187122.0,172.9,1082.0
+Kiambu County,Lari,SubCounty,135303.0,432.3,313.0
+Kiambu County,Limuru,SubCounty,159314.0,285.1,559.0
+Kiambu County,Ruiru,SubCounty,371111.0,201.1,1846.0
+Kiambu County,Thika East,SubCounty,38956.0,109.9,354.0
+Kiambu County,Thika West,SubCounty,245820.0,91.4,2689.0
+Turkana County,Turkana,County,926976.0,68232.9,14.0
+Turkana County,Kibish,SubCounty,36769.0,10466.1,4.0
+Turkana County,Loima,SubCounty,107795.0,9113.3,12.0
+Turkana County,Turkana Central,SubCounty,185305.0,6415.2,29.0
+Turkana County,Turkana East,SubCounty,138526.0,11395.6,12.0
+Turkana County,Turkana North,SubCounty,65218.0,7012.2,9.0
+Turkana County,Turkana South,SubCounty,153736.0,7051.5,22.0
+Turkana County,Turkana West,SubCounty,239627.0,16778.9,14.0
+West Pokot County,West Pokot,County,621241.0,9123.2,68.0
+West Pokot County,Kipkomo,SubCounty,102633.0,765.6,134.0
+West Pokot County,Pokot Central,SubCounty,119016.0,2055.2,58.0
+West Pokot County,Pokot North,SubCounty,134485.0,3910.9,34.0
+West Pokot County,Pokot South,SubCounty,80661.0,536.7,150.0
+West Pokot County,West Pokot,SubCounty,184446.0,1854.8,99.0
+Samburu County,Samburu,County,310327.0,21065.1,15.0
+Samburu County,Samburu Central,SubCounty,164942.0,3674.4,45.0
+Samburu County,Samburu East,SubCounty,77994.0,10015.9,8.0
+Samburu County,Samburu North,SubCounty,67391.0,7374.8,9.0
+Trans Nzoia County,Trans Nzoia,County,990341.0,2495.2,397.0
+Trans Nzoia County,Trans Nzoia West,SubCounty,202377.0,355.4,569.0
+Trans Nzoia County,Trans Nzoia East,SubCounty,229538.0,629.1,365.0
+Trans Nzoia County,Kwanza,SubCounty,203821.0,465.3,438.0
+Trans Nzoia County,Endebess,SubCounty,111782.0,678.4,165.0
+Trans Nzoia County,Kiminini,SubCounty,242823.0,366.9,662.0
+Uasin Gishu County,Uasin Gishu,County,1163186.0,3392.2,343.0
+Uasin Gishu County,Ainabkoi,SubCounty,138184.0,492.9,280.0
+Uasin Gishu County,Kapseret,SubCounty,198499.0,299.3,663.0
+Uasin Gishu County,Kesses,SubCounty,148798.0,731.0,204.0
+Uasin Gishu County,Moiben,SubCounty,181338.0,769.8,236.0
+Uasin Gishu County,Soy,SubCounty,229094.0,667.6,343.0
+Uasin Gishu County,Turbo,SubCounty,267273.0,431.4,620.0
+Elgeyo/Marakwet County,Elgeyo/Marakwet,County,454480.0,3032.0,150.0
+Elgeyo/Marakwet County,Keiyo North,SubCounty,99176.0,543.2,183.0
+Elgeyo/Marakwet County,Keiyo South,SubCounty,120750.0,897.8,134.0
+Elgeyo/Marakwet County,Marakwet East,SubCounty,97041.0,853.2,114.0
+Elgeyo/Marakwet County,Marakwet West,SubCounty,137513.0,737.9,186.0
+Nandi County,Nandi,County,885711.0,2855.8,310.0
+Nandi County,Chesumei,SubCounty,164133.0,474.6,346.0
+Nandi County,Nandi Central,SubCounty,147553.0,362.9,407.0
+Nandi County,Nandi East,SubCounty,119173.0,397.6,300.0
+Nandi County,Nandi North,SubCounty,166171.0,606.3,274.0
+Nandi County,Nandi South,SubCounty,172750.0,457.4,378.0
+Nandi County,Tinderet,SubCounty,115931.0,557.1,208.0
+Baringo County,Baringo,County,666763.0,10976.4,61.0
+Baringo County,Baringo Central,SubCounty,96951.0,786.5,123.0
+Baringo County,Baringo North,SubCounty,104871.0,1629.3,64.0
+Baringo County,East Pokot,SubCounty,79923.0,2500.5,32.0
+Baringo County,Koibatek,SubCounty,129535.0,938.6,138.0
+Baringo County,Marigat,SubCounty,90955.0,1453.4,63.0
+Baringo County,Mogotio,SubCounty,91104.0,1375.3,66.0
+Baringo County,Tiaty East,SubCounty,73424.0,2106.5,35.0
+Laikipia County,Laikipia,County,518560.0,9532.2,54.0
+Laikipia County,Laikipia Central,SubCounty,95594.0,1232.6,78.0
+Laikipia County,Laikipia East,SubCounty,102815.0,1539.0,67.0
+Laikipia County,Laikipia North,SubCounty,36184.0,2575.0,14.0
+Laikipia County,Laikipia West,SubCounty,129263.0,3372.2,38.0
+Laikipia County,Nyahururu,SubCounty,154704.0,813.4,190.0
+Nakuru County,Nakuru,County,2162202.0,7462.4,290.0
+Nakuru County,Gilgil,SubCounty,185209.0,1075.4,172.0
+Nakuru County,Kuresoi North,SubCounty,175074.0,618.1,283.0
+Nakuru County,Kuresoi South,SubCounty,155324.0,548.2,283.0
+Nakuru County,Molo,SubCounty,156732.0,483.2,324.0
+Nakuru County,Naivasha,SubCounty,355383.0,1958.4,181.0
+Nakuru County,Nakuru East,SubCounty,193926.0,230.9,840.0
+Nakuru County,Nakuru North,SubCounty,218050.0,387.3,563.0
+Nakuru County,Nakuru West,SubCounty,198661.0,71.9,2764.0
+Nakuru County,Njoro,SubCounty,238773.0,699.5,341.0
+Nakuru County,Rongai,SubCounty,199906.0,988.1,202.0
+Nakuru County,Subukia,SubCounty,85164.0,401.5,212.0
+Narok County,Narok,County,1157873.0,17950.3,65.0
+Narok County,Narok East,SubCounty,115323.0,2042.0,56.0
+Narok County,Narok North,SubCounty,251862.0,2159.4,117.0
+Narok County,Narok South,SubCounty,238472.0,4577.3,52.0
+Narok County,Narok West,SubCounty,195287.0,5563.0,35.0
+Narok County,Trans Mara East,SubCounty,111183.0,309.8,359.0
+Narok County,Trans Mara West,SubCounty,245714.0,2545.9,97.0
+Narok County,Mau Forest*,Special Area,32.0,752.9,0.0
+Kajiado County,Kajiado,County,1117840.0,21871.1,51.0
+Kajiado County,Isinya,SubCounty,210473.0,1071.6,196.0
+Kajiado County,Kajiado Central,SubCounty,161862.0,4239.5,38.0
+Kajiado County,Kajiado North,SubCounty,306596.0,110.6,2773.0
+Kajiado County,Kajiado West,SubCounty,182849.0,7862.1,23.0
+Kajiado County,Loitokitok,SubCounty,191846.0,6336.7,30.0
+Kajiado County,Mashuuru,SubCounty,64214.0,2250.7,29.0
+Kericho County,Kericho,County,901777.0,2436.1,370.0
+Kericho County,Belgut,SubCounty,145072.0,264.3,549.0
+Kericho County,Bureti,SubCounty,199470.0,320.6,622.0
+Kericho County,Kericho East,SubCounty,170625.0,240.6,709.0
+Kericho County,Kipkelion,SubCounty,122530.0,349.9,350.0
+Kericho County,Londiani,SubCounty,137580.0,399.5,344.0
+Kericho County,Soin Sigowet,SubCounty,126500.0,466.2,271.0
+Kericho County,Mau Forest,Special Area,0.0,201.2,0.0
+Kericho County,Tinderet Forest*,Special Area,0.0,193.7,0.0
+Bomet County,Bomet,County,875689.0,2530.9,346.0
+Bomet County,Bomet East,SubCounty,144275.0,305.0,473.0
+Bomet County,Chepalungu,SubCounty,164837.0,460.5,358.0
+Bomet County,Konoin,SubCounty,163507.0,392.5,417.0
+Bomet County,Sotik,SubCounty,227855.0,544.3,419.0
+Bomet County,Bomet Central,SubCounty,175215.0,286.1,613.0
+Bomet County,Mau Forest*,Special Area,0.0,542.3,0.0
+Kakamega County,Kakamega,County,1867579.0,3020.0,618.0
+Kakamega County,Butere,SubCounty,154100.0,210.1,734.0
+Kakamega County,Kakamega Central,SubCounty,188212.0,155.2,1212.0
+Kakamega County,Kakamega East,SubCounty,167641.0,417.2,402.0
+Kakamega County,Kakamega North,SubCounty,238330.0,420.8,566.0
+Kakamega County,Kakamega South,SubCounty,111743.0,146.2,764.0
+Kakamega County,Khwisero,SubCounty,113476.0,145.6,780.0
+Kakamega County,Likuyani,SubCounty,152055.0,316.1,481.0
+Kakamega County,Lugari,SubCounty,122728.0,254.3,483.0
+Kakamega County,Matete,SubCounty,66172.0,102.7,644.0
+Kakamega County,Matungu,SubCounty,166940.0,279.1,598.0
+Kakamega County,Mumias East,SubCounty,116851.0,150.2,778.0
+Kakamega County,Mumias West,SubCounty,115354.0,163.3,706.0
+Kakamega County,Navakholo,SubCounty,153977.0,259.3,594.0
+Vihiga County,Vihiga,County,590013.0,563.8,1047.0
+Vihiga County,Emuhaya,SubCounty,97141.0,89.0,1091.0
+Vihiga County,Vihiga,SubCounty,95292.0,90.1,1058.0
+Vihiga County,Sabatia,SubCounty,131628.0,111.4,1181.0
+Vihiga County,Luanda,SubCounty,106694.0,84.3,1265.0
+Vihiga County,Hamisi,SubCounty,159241.0,157.2,1013.0
+Vihiga County,Kakamega Forest*,Special Area,17.0,31.7,1.0
+Bungoma County,Bungoma,County,1670570.0,3023.9,552.0
+Bungoma County,Bumula,SubCounty,215892.0,345.2,625.0
+Bungoma County,Bungoma Central,SubCounty,177748.0,232.7,764.0
+Bungoma County,Bungoma East,SubCounty,114548.0,163.3,702.0
+Bungoma County,Bungoma North,SubCounty,121317.0,191.5,633.0
+Bungoma County,Bungoma South,SubCounty,287765.0,321.2,896.0
+Bungoma County,Cheptais,SubCounty,136035.0,222.9,610.0
+Bungoma County,Kimilili-Bungoma,SubCounty,162038.0,179.6,902.0
+Bungoma County,Mt Elgon,SubCounty,78873.0,126.5,624.0
+Bungoma County,Bungoma West,SubCounty,119875.0,211.0,568.0
+Bungoma County,Tongaren,SubCounty,100343.0,185.3,542.0
+Bungoma County,Webuye West,SubCounty,152515.0,238.9,638.0
+Bungoma County,Mt Elgon Forest*,Special Area,3621.0,605.8,6.0
+Busia County,Busia,County,893681.0,1696.3,527.0
+Busia County,Bunyala,SubCounty,85977.0,192.2,447.0
+Busia County,Busia,SubCounty,142408.0,196.0,727.0
+Busia County,Butula,SubCounty,140334.0,243.6,576.0
+Busia County,Nambale,SubCounty,111636.0,238.1,469.0
+Busia County,Samia,SubCounty,107176.0,262.4,408.0
+Busia County,Teso North,SubCounty,138034.0,261.0,529.0
+Busia County,Teso South,SubCounty,168116.0,302.9,555.0
+Siaya County,Siaya,County,993183.0,2529.8,393.0
+Siaya County,Siaya,SubCounty,224343.0,598.9,375.0
+Siaya County,Gem,SubCounty,179792.0,405.3,444.0
+Siaya County,Ugenya,SubCounty,134354.0,323.5,415.0
+Siaya County,Ugunja,SubCounty,104241.0,201.0,519.0
+Siaya County,Bondo,SubCounty,197883.0,598.8,330.0
+Siaya County,Rarieda,SubCounty,152570.0,402.4,379.0
+Kisumu County,Kisumu,County,1155574.0,2085.4,554.0
+Kisumu County,Kisumu East,SubCounty,220997.0,141.6,1560.0
+Kisumu County,Kisumu Central,SubCounty,174145.0,36.8,4737.0
+Kisumu County,Kisumu West,SubCounty,172821.0,209.0,827.0
+Kisumu County,Seme,SubCounty,121667.0,267.7,455.0
+Kisumu County,Muhoroni,SubCounty,154116.0,657.5,234.0
+Kisumu County,Nyando,SubCounty,161508.0,446.1,362.0
+Kisumu County,Nyakach,SubCounty,150320.0,326.7,460.0
+Homa Bay County,Homa Bay,County,1131950.0,3152.5,359.0
+Homa Bay County,Homa Bay,SubCounty,117439.0,182.0,645.0
+Homa Bay County,Ndhiwa,SubCounty,218136.0,713.5,306.0
+Homa Bay County,Rachuonyo North,SubCounty,178686.0,435.4,410.0
+Homa Bay County,Rachuonyo East,SubCounty,121822.0,250.9,486.0
+Homa Bay County,Rachuonyo South,SubCounty,130814.0,256.1,511.0
+Homa Bay County,Rangwe,SubCounty,117732.0,274.1,429.0
+Homa Bay County,Suba North,SubCounty,124938.0,406.3,307.0
+Homa Bay County,Suba South,SubCounty,122383.0,634.1,193.0
+Migori County,Migori,County,1116436.0,2613.5,427.0
+Migori County,Awendo,SubCounty,117290.0,255.3,459.0
+Migori County,Kuria East,SubCounty,96872.0,187.6,516.0
+Migori County,Kuria West,SubCounty,208513.0,395.7,527.0
+Migori County,Nyatike,SubCounty,176162.0,676.9,260.0
+Migori County,Rongo,SubCounty,124587.0,213.4,584.0
+Migori County,Suna East,SubCounty,122674.0,205.1,598.0
+Migori County,Suna West,SubCounty,128890.0,287.5,448.0
+Migori County,Uriri,SubCounty,141448.0,392.1,361.0
+Kisii County,Kisii,County,1266860.0,1323.0,958.0
+Kisii County,Etago,SubCounty,83787.0,108.4,773.0
+Kisii County,Gucha,SubCounty,83740.0,82.1,1020.0
+Kisii County,Gucha South,SubCounty,83623.0,94.9,881.0
+Kisii County,Kenyenya,SubCounty,131740.0,141.7,930.0
+Kisii County,Kisii Central,SubCounty,166906.0,135.8,1229.0
+Kisii County,Kisii South,SubCounty,135134.0,128.3,1054.0
+Kisii County,Kitutu Central,SubCounty,154175.0,100.3,1537.0
+Kisii County,Marani,SubCounty,107464.0,128.4,837.0
+Kisii County,Masaba South,SubCounty,122396.0,161.2,759.0
+Kisii County,Nyamache,SubCounty,130898.0,162.7,805.0
+Kisii County,Sameta,SubCounty,66997.0,79.1,847.0
+Nyamira County,Nyamira,County,605576.0,897.3,675.0
+Nyamira County,Borabu,SubCounty,73167.0,246.9,296.0
+Nyamira County,Manga,SubCounty,94209.0,111.5,845.0
+Nyamira County,Masaba North,SubCounty,111860.0,141.7,789.0
+Nyamira County,Nyamira North,SubCounty,167267.0,215.7,775.0
+Nyamira County,Nyamira South,SubCounty,159073.0,181.5,876.0
+Nairobi City County,Nairobi City,County,4397073.0,703.9,6247.0
+Nairobi City County,Dagoretti,SubCounty,434208.0,29.1,14908.0
+Nairobi City County,Embakasi,SubCounty,988808.0,86.3,11460.0
+Nairobi City County,Kamukunji,SubCounty,268276.0,10.5,25455.0
+Nairobi City County,Kasarani,SubCounty,780656.0,86.2,9058.0
+Nairobi City County,Kibra,SubCounty,185777.0,12.1,15311.0
+Nairobi City County,Lang'ata,SubCounty,197489.0,216.8,911.0
+Nairobi City County,Makadara,SubCounty,189536.0,11.7,16150.0
+Nairobi City County,Mathare,SubCounty,206564.0,3.0,68941.0
+Nairobi City County,Njiru,SubCounty,626482.0,129.9,4821.0
+Nairobi City County,Starehe,SubCounty,210423.0,20.6,10205.0
+Nairobi City County,Westlands,SubCounty,308854.0,97.5,3167.0

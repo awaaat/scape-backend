@@ -122,6 +122,23 @@ class ProjectDetailView(APIView):
             )
         return Response(ProjectSerializer(project).data)
 
+    def delete(self, request, pk):
+        project = get_owned_project(request, pk)
+
+        if project.contract_id:
+            return Response(
+                {"error": "This project has already been converted to a contract and can no longer be deleted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not (request.user.is_staff or project.is_client_editable()):
+            return Response(
+                {"error": "This project can no longer be deleted — it's already past the review stage. "
+                          "Message the team if you need to cancel it."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        services.delete_project(project)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class ProjectUnreadSummaryView(APIView):
     """GET /api/projects/unread-count/ — total unread admin replies

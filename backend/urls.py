@@ -34,8 +34,10 @@ urlpatterns = [
     path("api/", include("visitors.urls")),
     path("api/", include("jobs.urls")),
     path("api/", include("property_intel.urls")),   # add this
+    path("api/", include("business_intel.urls")),
     path("api/", include("payments.urls")),
     path("api/", include("contracts.urls")),
+    path("api/", include("agreements.urls")),
     path("api/", include("projects.urls")),         # ← NEW
     path("api/users/", include("users.urls")),
 ]

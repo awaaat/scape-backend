@@ -18,10 +18,31 @@ if env_file.exists():
 # ─── Django core ──────────────────────────────────────────────────────
 SECRET_KEY = env("SECRET_KEY")  # no default — must be set, locally or on Render
 DEBUG = env.bool("DEBUG", default=False)
-ALLOWED_HOSTS = env.list(
-    "ALLOWED_HOSTS",
-    default=["localhost", "127.0.0.1", ".scapedatasolutions.com"],
-)
+
+# ✅ FIX: Render sets RENDER=true automatically on every deployed service
+# (https://render.com/docs/environment-variables#all-runtimes). Use THIS,
+# not DEBUG, to gate anything that should only ever apply on the real
+# deployed server (HTTPS redirect, secure cookies, HSTS). DEBUG is easy
+# to get wrong locally (e.g. a .env copied from Render for testing some
+# other var) — if that happens, ALLOWED_HOSTS/CORS still degrade safely,
+# but SECURE_SSL_REDIRECT does not: it forces every request, including
+# the browser's CORS preflight OPTIONS request, from http:// to https://.
+# runserver doesn't speak https, and browsers refuse to follow a redirect
+# on a preflight at all — so EVERY API call fails with a CORS error that
+# has nothing to do with CORS. Keying off RENDER instead means this can
+# only ever fire on the actual deployed service, never locally by accident.
+IS_RENDER = env.bool("RENDER", default=False)
+
+# ✅ FIX: Always include localhost and 127.0.0.1, even if the env var overrides.
+# We read the env list, then merge with a base list so we never lose local dev access.
+_BASE_ALLOWED_HOSTS = ["localhost", "127.0.0.1", ".scapedatasolutions.com"]
+_ENV_ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
+ALLOWED_HOSTS = list(set(_BASE_ALLOWED_HOSTS + _ENV_ALLOWED_HOSTS))
+
+# If DEBUG is True, allow any host (convenience for dev).
+if DEBUG:
+    ALLOWED_HOSTS = ["*"]
+
 CSRF_TRUSTED_ORIGINS = env.list(
     "CSRF_TRUSTED_ORIGINS",
     default=[
@@ -50,8 +71,10 @@ INSTALLED_APPS = [
     "property_intel",
     "payments",
     "users",
+    "agreements",
     "contracts",
     "projects",  # ← NEW: client project submission + real-time messaging
+    "business_intel",
     "channels",
     "rest_framework_simplejwt.token_blacklist",
 ]
@@ -154,11 +177,21 @@ MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ─── CORS – only your real frontend origins ─────────────────────────
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = env.list(
-    "FRONTEND_ORIGINS",
-    default=["http://localhost:5173", "http://localhost:3000"],
-)
+# Local dev: accept any frontend origin when DEBUG. Production keeps
+# the explicit allowlist below since DEBUG defaults to False there.
+#
+# ✅ FIX: Same class of bug as ALLOWED_HOSTS above. FRONTEND_ORIGINS is
+# set in your .env (copied from Render, pointed at the prod domain),
+# and env.list(..., default=[...]) only uses the default when the var
+# is completely UNSET — if it's set to anything, it REPLACES the list
+# entirely, so localhost:5173/3000 silently fell out of the allowlist
+# whenever FRONTEND_ORIGINS was present. Now we always merge the env
+# value into a base local-dev list so local origins can never be
+# dropped by a prod-flavored .env.
+CORS_ALLOW_ALL_ORIGINS = DEBUG
+_BASE_CORS_ORIGINS = ["http://localhost:5173", "http://localhost:3000"]
+_ENV_CORS_ORIGINS = env.list("FRONTEND_ORIGINS", default=[])
+CORS_ALLOWED_ORIGINS = list(set(_BASE_CORS_ORIGINS + _ENV_CORS_ORIGINS))
 CORS_ALLOW_CREDENTIALS = True
 
 # ─── Email (Brevo via Anymail HTTP API — no SMTP, works reliably on Render) ──
@@ -213,11 +246,16 @@ REST_FRAMEWORK = {
         "payments_initialize": "10/minute",
         "project_submit": "10/minute",    # ← NEW: throttles POST /api/projects/
         "project_message": "60/minute",   # ← NEW: throttles project message-send endpoints
+        "business_intel_submit": "10/minute",
     },
 }
 
-# ─── Security (only matters once DEBUG=False) ──────────────────────
-if not DEBUG:
+# ─── Security ────────────────────────────────────────────────────────
+# ✅ FIX: was `if not DEBUG:` — now gated on IS_RENDER (see comment near
+# ALLOWED_HOSTS above). Only the actual deployed Render service ever
+# gets SECURE_SSL_REDIRECT etc.; a mis-set DEBUG locally can't trigger
+# it anymore.
+if IS_RENDER:
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
@@ -274,6 +312,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "property_intel.tasks.purge_expired_reports",
         "schedule": 86400.0,  # once a day
     },
+    "sweep-stuck-business-reports": {
+        "task": "business_intel.tasks.sweep_stuck_reports",
+        "schedule": 300.0,  # every 5 minutes
+    },
 }
 
 # ─── Paystack ───────────────────────────────────────────────────────
@@ -283,6 +325,11 @@ PROPERTY_REPORT_PRICE_KES = env.int("PROPERTY_REPORT_PRICE_KES", default=300)
 
 # ─── Google Maps Platform ─────────────────────────────────────────────
 GOOGLE_MAPS_API_KEY = env("GOOGLE_MAPS_API_KEY", default="")
+
+# Dev-only bypass for slow/unreachable OSM Overpass calls -- see
+# google_client.query_osm_overpass()'s own comment. Defaults to False
+# so production is unaffected unless explicitly set in that env's .env.
+SKIP_OSM_OVERPASS_LOCALLY = env.bool("SKIP_OSM_OVERPASS_LOCALLY", default=False)
 
 # ─── Africa's Talking (SMS OTP) ────────────────────────────────────
 AFRICASTALKING_USERNAME = env("AFRICASTALKING_USERNAME", default="")
@@ -341,3 +388,30 @@ ADMIN_BYPASS_EMAILS = {
     ).split(",")
     if e.strip()
 }
+# ─── Invoicing — company + payment method details for generated PDFs ───
+# All PLACEHOLDER values below — replace with real numbers before any
+# invoice goes to a real client. No KRA/tax field per product decision;
+# clients are Kenyan and pan-African, so payment methods deliberately
+# span local (bank, M-Pesa Paybill) and cross-border rails rather than
+# assuming one country's banking system.
+INVOICE_COMPANY_NAME = env("INVOICE_COMPANY_NAME", default="Scape Data Solutions")
+INVOICE_COMPANY_ADDRESS = env("INVOICE_COMPANY_ADDRESS", default="Nairobi, Kenya")
+INVOICE_COMPANY_EMAIL = env("INVOICE_COMPANY_EMAIL", default="billing@scapedata.example")
+INVOICE_COMPANY_PHONE = env("INVOICE_COMPANY_PHONE", default="+254 700 000 000")
+
+INVOICE_PAYMENT_METHODS = [
+    {"label": "Bank transfer (KES)", "lines": ["Bank: PLACEHOLDER BANK", "Account name: Scape Data Solutions", "Account number: 0000000000", "Branch/SWIFT: PLACEHOLDER"]},
+    {"label": "M-Pesa Paybill", "lines": ["Paybill: 000000", "Account number: use the Invoice Number below"]},
+    {"label": "Payoneer", "lines": ["Payoneer customer ID: PLACEHOLDER", "Or send to: billing@scapedata.example"]},
+    {"label": "PayPal", "lines": ["paypal.me/PLACEHOLDER", "Or: billing@scapedata.example"]},
+    {"label": "Wise (TransferWise)", "lines": ["Wise account: billing@scapedata.example", "Reference: use the Invoice Number below"]},
+    {"label": "Remitly", "lines": ["Recipient: Scape Data Solutions", "Contact billing@scapedata.example for send details"]},
+    {"label": "Sendwave", "lines": ["Recipient: Scape Data Solutions", "Contact billing@scapedata.example for send details"]},
+    {"label": "Crypto (USDT)", "lines": ["Network: TRC20", "Wallet address: PLACEHOLDER_WALLET_ADDRESS"]},
+]
+
+# ─── Invoicing — sequential numbering ───────────────────────────────────
+# "SCP-2026-000123"-style. See contracts/services._next_invoice_number()
+# for the race-safe InvoiceCounter it drives.
+INVOICE_NUMBER_PREFIX = env("INVOICE_NUMBER_PREFIX", default="SCP")
+INVOICE_DEFAULT_DUE_DAYS = env.int("INVOICE_DEFAULT_DUE_DAYS", default=14)

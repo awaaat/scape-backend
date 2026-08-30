@@ -102,8 +102,20 @@ class Project(models.Model):
         max_length=100, blank=True,
         help_text="Free-text project type, e.g. 'Data collection', 'Web development'.",
     )
+    # Kept in sync with the frontend's currency <select> options
+    # (NewProjectForm.jsx) — anything outside this set is rejected both
+    # here (DB constraint, last line of defense) and in
+    # ProjectCreateSerializer/ProjectUpdateSerializer (clean 400 instead
+    # of a raw IntegrityError).
+    CURRENCY_CHOICES = [
+        ("KES", "KES"),
+        ("USD", "USD"),
+        ("GBP", "GBP"),
+        ("EUR", "EUR"),
+    ]
+
     budget = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    currency = models.CharField(max_length=3, default="KES")
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, default="KES")
     deadline = models.DateField(null=True, blank=True)
 
     # See storage.py — Supabase-backed, not local disk. attachment_url is
@@ -145,6 +157,12 @@ class Project(models.Model):
         indexes = [
             models.Index(fields=["owner", "status"]),
             models.Index(fields=["status", "created_at"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(budget__isnull=True) | models.Q(budget__gte=0),
+                name="project_budget_non_negative",
+            ),
         ]
 
     def __str__(self):

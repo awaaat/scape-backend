@@ -48,6 +48,20 @@ def send_project_submitted_email(project):
     logger.info("Project-submitted notification sent for project %s", project.id)
 
 
+def send_project_acknowledgment_email(project):
+    """Client-facing 'thanks, we got it' confirmation — sent the
+    moment a project is submitted. Caller (services.create_project)
+    wraps this in try/except, same posture as
+    send_project_submitted_email above."""
+    _send(
+        subject=f"We received your project — {project.title}",
+        template_name="email/project_acknowledgment.html",
+        context={"project": project},
+        to_emails=[project.owner.email],
+    )
+    logger.info("Project-acknowledgment email sent for project %s to %s", project.id, project.owner.email)
+
+
 def send_new_message_notification(message):
     """Caller (services.post_project_message) wraps this in try/except —
     same posture as contracts.emails.send_new_message_notification."""

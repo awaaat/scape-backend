@@ -5,8 +5,8 @@ from .models import UserSignup
 
 @admin.register(UserSignup)
 class UserSignupAdmin(admin.ModelAdmin):
-    list_display = ["full_name", "email", "phone", "email_verified", "consent_given", "is_active", "created_at"]
-    list_filter = ["email_verified", "consent_given", "is_active", "created_at"]
+    list_display = ["full_name", "email", "phone", "country", "email_verified", "consent_given", "is_active", "created_at"]
+    list_filter = ["country", "email_verified", "consent_given", "is_active", "created_at"]
     search_fields = ["full_name", "email", "phone"]
     readonly_fields = [
         "id",
@@ -17,7 +17,7 @@ class UserSignupAdmin(admin.ModelAdmin):
         "updated_at",
     ]
     fieldsets = (
-        (None, {"fields": ("id", "full_name", "email", "phone", "is_active")}),
+        (None, {"fields": ("id", "full_name", "email", "phone", "country", "is_active")}),
         ("Origin", {"fields": ("visitor", "ip_address", "user_agent")}),
         ("Consent", {"fields": ("consent_given", "consent_given_at", "privacy_policy_version")}),
         (

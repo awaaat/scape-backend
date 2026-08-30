@@ -29,15 +29,33 @@ from django.utils import timezone
 
 from visitors.models import Visitor
 
+# Only country this app enforces Kenyan-format phone numbers for. Anywhere
+# else, phone is optional free-form text (or omitted entirely) — see
+# UserSignup.clean() and UserSignupCreateSerializer.validate() for the two
+# places this same rule is applied (API path never calls full_clean(), so
+# both need to agree independently rather than one delegating to the other).
+KENYA_COUNTRY_CODE = "KE"
+
+VERIFICATION_TOKEN_VALID_HOURS = 48
+
+
 def validate_phone_field(value):
-    """Model-level guard — mirrors the serializer's normalization so
-    admin-created/edited records can't bypass it either."""
+    """
+    Legacy field-level validator — referenced by an already-generated
+    migration (users/migrations/0003_alter_usersignup_phone.py) via its
+    import path, so it must keep existing here even though current phone
+    validation lives in UserSignup.clean() and
+    UserSignupCreateSerializer.validate() instead (those have access to
+    `country`, which a plain field validator never does). Not attached to
+    the live `phone` field anymore — kept only so the historical migration
+    can still be imported.
+    """
+    if not value:
+        return
     try:
         normalize_kenyan_phone(value)
     except InvalidKenyanPhone as exc:
         raise DjangoValidationError(str(exc)) from exc
-
-VERIFICATION_TOKEN_VALID_HOURS = 48
 
 
 class UserSignup(models.Model):
@@ -56,7 +74,32 @@ class UserSignup(models.Model):
 
     full_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=20, validators=[validate_phone_field], db_index=True, unique=True)
+
+    # Nullable/blank: only required for Kenyan accounts (see clean() and
+    # the serializer). Non-Kenyan signups may have no phone at all.
+    # NULL, not "", when absent — Postgres treats multiple NULLs as
+    # distinct under a unique index, so this doesn't collide the way two
+    # blank strings would.
+    phone = models.CharField(
+        max_length=20, db_index=True, unique=True, null=True, blank=True,
+    )
+
+    # ISO 3166-1 alpha-2 country code, captured once at signup. Drives
+    # which currency (payments.UserWallet) this user's wallet operates
+    # in — see payments/views.py's WalletTopUpView. Deliberately not
+    # geolocated: IP-based location is too unstable for a payments
+    # decision (VPNs, roaming), so this is a value the client sets
+    # themselves at registration and it becomes the durable source of
+    # truth for "what currency does this person pay in."
+    country = models.CharField(
+        max_length=2, default=KENYA_COUNTRY_CODE, db_index=True,
+        help_text="ISO 3166-1 alpha-2 country code (e.g. 'KE', 'US'), set at signup.",
+    )
+
+    # Public URL from users/storage.py's Supabase upload — same "URL, not
+    # FileField" pattern as contracts.Contract.contract_document_url,
+    # since actual bytes live in object storage, never on local disk.
+    avatar_url = models.URLField(blank=True)
 
     # Links back to the visitor session (see visitors/middleware.py) the
     # same way Lead and JobApplication already do — lets you see what
@@ -91,6 +134,26 @@ class UserSignup(models.Model):
 
     def __str__(self):
         return f"{self.full_name} <{self.email}>"
+
+    def clean(self):
+        """
+        Conditional phone validation, run on full_clean() (e.g. the Django
+        admin's ModelForm). Not wired in as a field-level `validators=[...]`
+        entry because a plain validator only ever sees the phone value in
+        isolation — it can't know this account's country, so it can't tell
+        a valid US number from a malformed Kenyan one. The API path (see
+        UserSignupCreateSerializer.validate()) never calls full_clean(), so
+        it enforces the same rule independently rather than relying on this.
+        """
+        super().clean()
+        country = (self.country or KENYA_COUNTRY_CODE).upper()
+        if country == KENYA_COUNTRY_CODE:
+            if not self.phone:
+                raise DjangoValidationError({"phone": "Phone number is required for Kenyan accounts."})
+            try:
+                self.phone = normalize_kenyan_phone(self.phone)
+            except InvalidKenyanPhone as exc:
+                raise DjangoValidationError({"phone": str(exc)}) from exc
 
     def generate_verification_token(self):
         """

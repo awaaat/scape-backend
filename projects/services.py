@@ -12,6 +12,17 @@ from .models import Project, ProjectMessage, ProjectStatusChange
 
 logger = logging.getLogger("projects")
 
+# Shown to the client the moment their project lands, in the message
+# thread itself — so "Messages" isn't a blank, dead-looking panel
+# right after submission.
+WELCOME_MESSAGE_SENDER_NAME = "Scape Data Team"
+WELCOME_MESSAGE_BODY = (
+    "Thanks for submitting your project! Our team will review it shortly, "
+    "and you'll see the status here move to \"Under review,\" then \"In progress\" "
+    "once we've scoped the work and sent over a contract to sign. "
+    "Feel free to add anything here in the meantime."
+)
+
 
 class ProjectConversionError(Exception):
     """Raised when a project can't be converted into a Contract."""
@@ -41,6 +52,43 @@ def _attach_file(project, uploaded_file):
     project.attachment_content_type = uploaded_file.content_type or ""
 
 
+def _send_project_created_notifications(project):
+    """Admin notification + client acknowledgment are independent
+    side effects — separate try/except each, so a failure on one
+    never suppresses the other or blocks project creation."""
+    try:
+        emails.send_project_submitted_email(project)
+    except Exception:
+        logger.exception("Failed to send project-submitted email for project %s", project.id)
+
+    try:
+        emails.send_project_acknowledgment_email(project)
+    except Exception:
+        logger.exception("Failed to send project-acknowledgment email for project %s", project.id)
+
+
+def _create_welcome_message(project):
+    """Auto-creates the first message on a project's thread right
+    after submission, so the client doesn't land on a blank "No
+    messages yet" panel. Created directly via ProjectMessage.objects
+    .create() rather than post_project_message() — the post_save
+    receiver (signals.broadcast_new_project_message) still fires
+    either way and pushes live over the websocket, but this skips
+    post_project_message()'s own email side effect, since
+    send_project_acknowledgment_email() already covers "you've been
+    heard" for this moment — firing both would be two emails for one
+    submission."""
+    try:
+        ProjectMessage.objects.create(
+            project=project,
+            sender_type="admin",
+            sender_name=WELCOME_MESSAGE_SENDER_NAME,
+            body=WELCOME_MESSAGE_BODY,
+        )
+    except Exception:
+        logger.exception("Failed to create welcome message for project %s", project.id)
+
+
 def create_project(*, owner, validated_data):
     """THE single place a Project gets created from client input —
     called by ProjectListCreateView."""
@@ -51,10 +99,8 @@ def create_project(*, owner, validated_data):
         _attach_file(project, attachment)  # raises before save() if upload fails
     project.save()
 
-    try:
-        emails.send_project_submitted_email(project)
-    except Exception:
-        logger.exception("Failed to send project-submitted email for project %s", project.id)
+    _create_welcome_message(project)
+    _send_project_created_notifications(project)
     return project
 
 
@@ -70,6 +116,18 @@ def update_project(*, project, validated_data):
         _attach_file(project, attachment)
     project.save()
     return project
+
+
+def delete_project(project):
+    """THE single place a Project is ever deleted by its owner —
+    called by ProjectDetailView.delete. Only reachable while the
+    project is still client-editable (submitted/under_review) and has
+    never been converted to a contract — enforced by the view before
+    this is called, not re-checked here, same division of
+    responsibility as update_project above. ProjectMessage and
+    ProjectStatusChange rows go with it via CASCADE (see models.py)."""
+    logger.info("Project %s deleted by owner %s", project.id, project.owner_id)
+    project.delete()
 
 
 def post_project_message(*, project, sender_type, sender_user=None, sender_name="", body):

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 2.2cm 2cm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; color: #262d3d; font-size: 11pt; }
+
+  .letterhead { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; padding-bottom: 18px; border-bottom: 3px solid #204ecf; }
+  .brand-mark { display: flex; align-items: center; gap: 10px; }
+  .brand-badge { width: 40px; height: 40px; border-radius: 8px; background: #204ecf; color: #ffffff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; }
+  .brand-name { font-size: 17px; font-weight: 700; color: #262d3d; }
+  .brand-meta { font-size: 9pt; color: #84888e; margin-top: 2px; line-height: 1.5; }
+
+  .invoice-title { text-align: right; }
+  .invoice-title h1 { margin: 0; font-size: 22px; color: #204ecf; letter-spacing: 0.02em; }
+  .invoice-meta { font-size: 9.5pt; color: #455065; margin-top: 6px; line-height: 1.6; }
+  .invoice-meta strong { color: #262d3d; }
+
+  .parties { display: flex; justify-content: space-between; margin: 22px 0 26px; }
+  .party-block h3 { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.05em; color: #84888e; margin: 0 0 6px; }
+  .party-block p { margin: 0; font-size: 10.5pt; line-height: 1.5; color: #262d3d; }
+
+  .contract-ref { background: #f9fafb; border: 1px solid #ebeced; border-radius: 6px; padding: 10px 14px; font-size: 9.5pt; color: #455065; margin-bottom: 22px; }
+  .contract-ref strong { color: #262d3d; }
+
+  table.line-items { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  table.line-items th { text-align: left; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.04em; color: #84888e; border-bottom: 2px solid #ebeced; padding: 8px 6px; }
+  table.line-items th.amount-col, table.line-items td.amount-col { text-align: right; }
+  table.line-items td { padding: 10px 6px; border-bottom: 1px solid #f1f2f3; font-size: 10.5pt; vertical-align: top; }
+  table.line-items .item-title { font-weight: 600; color: #262d3d; }
+  table.line-items .item-desc { font-size: 9pt; color: #84888e; margin-top: 2px; }
+
+  .totals { display: flex; justify-content: flex-end; margin: 16px 0 30px; }
+  .totals-box { width: 260px; }
+  .totals-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 10.5pt; color: #455065; }
+  .totals-row.grand { border-top: 2px solid #204ecf; margin-top: 6px; padding-top: 10px; font-size: 13pt; font-weight: 700; color: #204ecf; }
+
+  .payment-section h2 { font-size: 12pt; color: #262d3d; margin: 0 0 4px; }
+  .payment-hint { font-size: 9pt; color: #84888e; margin: 0 0 14px; }
+  .payment-methods { display: flex; flex-wrap: wrap; gap: 10px; }
+  .method-card { width: 47%; border: 1px solid #ebeced; border-radius: 6px; padding: 10px 12px; }
+  .method-card .label { font-size: 9.5pt; font-weight: 700; color: #204ecf; margin-bottom: 4px; }
+  .method-card .line { font-size: 9pt; color: #455065; line-height: 1.5; }
+
+  .notes { margin-top: 24px; font-size: 9.5pt; color: #455065; }
+  .notes h3 { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.05em; color: #84888e; margin: 0 0 6px; }
+
+  .footer { margin-top: 34px; padding-top: 14px; border-top: 1px solid #ebeced; font-size: 8.5pt; color: #84888e; text-align: center; }
+</style>
+</head>
+<body>
+
+  <div class="letterhead">
+    <div class="brand-mark">
+      <div class="brand-badge">S</div>
+      <div>
+        <div class="brand-name">{{ company_name }}</div>
+        <div class="brand-meta">{{ company_address }}{% if company_email %} · {{ company_email }}{% endif %}{% if company_phone %} · {{ company_phone }}{% endif %}</div>
+      </div>
+    </div>
+    <div class="invoice-title">
+      <h1>INVOICE</h1>
+      <div class="invoice-meta">
+        <strong>{{ invoice.invoice_number }}</strong><br>
+        Issued {{ issued_at }}<br>
+        Due {{ due_at }}
+      </div>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="party-block">
+      <h3>Billed to</h3>
+      <p>
+        {{ contract.client_name }}<br>
+        {% if contract.client_company %}{{ contract.client_company }}<br>{% endif %}
+        {{ contract.client_email }}
+      </p>
+    </div>
+    <div class="party-block">
+      <h3>Status</h3>
+      <p>{{ invoice.get_status_display() }}</p>
+    </div>
+  </div>
+
+  <div class="contract-ref">
+    <strong>Contract:</strong> {{ contract.title }} &nbsp;·&nbsp; <strong>Reference:</strong> {{ contract.id }}
+  </div>
+
+  <table class="line-items">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Milestone</th>
+        <th class="amount-col">Amount ({{ invoice.currency }})</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in milestones %}
+      <tr>
+        <td>{{ m.order }}</td>
+        <td>
+          <div class="item-title">{{ m.title }}</div>
+          {% if m.description %}<div class="item-desc">{{ m.description }}</div>{% endif %}
+        </td>
+        <td class="amount-col">{{ "%.2f"|format(m.amount) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div class="totals-box">
+      <div class="totals-row grand">
+        <span>Total due</span>
+        <span>{{ invoice.currency }} {{ "%.2f"|format(invoice.total_amount) }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="payment-section">
+    <h2>How to pay</h2>
+    <p class="payment-hint">Pay securely in the client portal, or use any method below — always reference invoice number <strong>{{ invoice.invoice_number }}</strong> so your payment is matched correctly.</p>
+    <div class="payment-methods">
+      {% for method in payment_methods %}
+      <div class="method-card">
+        <div class="label">{{ method.label }}</div>
+        {% for line in method.lines %}<div class="line">{{ line }}</div>{% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if invoice.notes %}
+  <div class="notes">
+    <h3>Notes</h3>
+    <p>{{ invoice.notes }}</p>
+  </div>
+  {% endif %}
+
+  <div class="footer">
+    {{ company_name }} · This is a computer-generated invoice and is valid without a signature.
+  </div>
+
+</body>
+</html>

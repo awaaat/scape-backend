@@ -1,3 +1,4 @@
+
 """
 payments/models.py
 
@@ -23,6 +24,8 @@ different app label.
 import uuid
 
 from django.db import models
+
+
 
 
 class PaystackTransaction(models.Model):
@@ -160,53 +163,79 @@ class PaystackWebhookEvent(models.Model):
 
 class UserWallet(models.Model):
     """
-    One row per Django auth user. Balance in KES (major unit, 2dp).
-    Topped up when a wallet_topup payment succeeds; deducted atomically
-    when a paid PropertyReport is dispatched for generation.
+    One row per Django auth user, holding TWO independent balances —
+    balance_kes and balance_usd — rather than one currency with
+    conversion at the boundary. No FX rate is ever applied to a wallet
+    balance: a KES top-up lands in balance_kes, a USD top-up lands in
+    balance_usd, and each is only ever spent in its own currency. Which
+    currency a given top-up uses is decided by the payer's
+    users.UserSignup.country (see payments/views.py's WalletTopUpView) —
+    this model itself is agnostic to how that decision gets made; it just
+    exposes one pair of credit/debit methods per currency, parameterized
+    the same way for both.
+
     Never goes negative — the deduction method returns False if insufficient.
     """
+    SUPPORTED_CURRENCIES = ("KES", "USD")
+
     from django.conf import settings as _settings
     user = models.OneToOneField(
         "auth.User", on_delete=models.CASCADE, related_name="wallet"
     )
-    balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    balance_kes = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    balance_usd = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-updated_at"]
 
     def __str__(self):
-        return f"Wallet({self.user_id}) KES {self.balance}"
+        return f"Wallet({self.user_id}) KES {self.balance_kes} / USD {self.balance_usd}"
 
     @classmethod
     def get_or_create_for_user(cls, user):
         wallet, _ = cls.objects.get_or_create(user=user)
         return wallet
 
-    def credit(self, amount):
-        """Add amount to balance atomically."""
-        from django.db.models import F
-        UserWallet.objects.filter(pk=self.pk).update(balance=F("balance") + amount)
-        self.refresh_from_db(fields=["balance"])
+    @staticmethod
+    def _balance_field(currency):
+        currency = (currency or "KES").upper()
+        if currency not in UserWallet.SUPPORTED_CURRENCIES:
+            raise ValueError(f"Unsupported wallet currency: {currency!r}")
+        return "balance_kes" if currency == "KES" else "balance_usd"
 
-    def debit(self, amount):
+    def get_balance(self, currency):
+        """Read the balance for one currency without a DB round-trip."""
+        return getattr(self, self._balance_field(currency))
+
+    def credit(self, amount, currency="KES"):
+        """Add amount to the given currency's balance atomically."""
+        from django.db.models import F
+        field = self._balance_field(currency)
+        UserWallet.objects.filter(pk=self.pk).update(**{field: F(field) + amount})
+        self.refresh_from_db(fields=[field])
+
+    def debit(self, amount, currency="KES"):
         """
-        Deduct amount atomically. Returns True if successful, False if
-        insufficient funds. Uses a conditional UPDATE so two concurrent
-        report submissions cannot both succeed against the same balance.
+        Deduct amount from the given currency's balance atomically.
+        Returns True if successful, False if insufficient funds in THAT
+        currency (a USD debit never draws from the KES balance or vice
+        versa). Uses a conditional UPDATE so two concurrent report
+        submissions cannot both succeed against the same balance.
         """
         from django.db.models import F
+        field = self._balance_field(currency)
         updated = UserWallet.objects.filter(
-            pk=self.pk, balance__gte=amount
-        ).update(balance=F("balance") - amount)
+            pk=self.pk, **{f"{field}__gte": amount}
+        ).update(**{field: F(field) - amount})
         if updated:
-            self.refresh_from_db(fields=["balance"])
+            self.refresh_from_db(fields=[field])
             return True
         return False
 
 
 class WalletTransaction(models.Model):
-    """Append-only ledger — every credit and debit, with reason."""
+    """Append-only ledger — every credit and debit, with reason and currency."""
     TYPES = [
         ("topup", "Top-up"),
         ("report_debit", "Report charge"),
@@ -214,8 +243,16 @@ class WalletTransaction(models.Model):
     ]
     wallet = models.ForeignKey(UserWallet, on_delete=models.CASCADE, related_name="transactions")
     transaction_type = models.CharField(max_length=20, choices=TYPES)
+    # Which of the wallet's two balances this entry affected. Defaults to
+    # KES so existing rows (all created before multi-currency existed,
+    # back when the wallet was KES-only) read correctly without a data
+    # migration.
+    currency = models.CharField(max_length=3, default="KES")
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    balance_after = models.DecimalField(max_digits=10, decimal_places=2)
+    balance_after = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="The balance of THIS entry's currency after the transaction — not the other balance.",
+    )
     reference = models.CharField(max_length=100, blank=True, help_text="Paystack ref or report id")
     note = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -224,7 +261,7 @@ class WalletTransaction(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.get_transaction_type_display()} KES {self.amount} — wallet {self.wallet_id}"
+        return f"{self.get_transaction_type_display()} {self.currency} {self.amount} — wallet {self.wallet_id}"
 
 
 class GuestCredit(models.Model):
@@ -292,3 +329,4 @@ class GuestCreditTransaction(models.Model):
 
     def __str__(self):
         return f"{self.get_transaction_type_display()} KES {self.amount} — guest {self.guest_credit_id}"
+

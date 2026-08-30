@@ -1,0 +1,505 @@
+<!--
+agreements/templates/agreement_document.html.j2
+
+Rendered by agreements/pdf.py via WeasyPrint, same pattern as
+property_intel/templates/property_location_report.html.j2 -- exact
+HTML/CSS, no ReportLab, straight HTML->PDF so what you see here is
+what prints.
+
+Two render modes, one file (no second template needed):
+  - render_mode == "document"    -> the actual legal document: letterhead,
+                                     parties, clause body, signature block.
+                                     This is what's emailed to the client
+                                     and what they sign. Produced at SEND
+                                     time from an unsigned Agreement, and
+                                     again at EXECUTION time once signed
+                                     (the signature block fills in) --
+                                     Agreement.generated_pdf_url points at
+                                     the latter.
+  - render_mode == "certificate" -> a DocuSign-style "Certificate of
+                                     Completion" -- the full AgreementEvent
+                                     trail as a standalone, presentable
+                                     document. Generated once
+                                     Agreement.is_fully_executed is True.
+                                     Agreement.certificate_pdf_url points
+                                     at this.
+
+Variables expected (all passed by agreements/pdf.py -- see that file for
+the exact dict shape):
+  render_mode, company_name, company_address, document_type_label,
+  title, reference_id, generated_date, effective_date,
+  client_name, client_company, client_email,
+  content_html (pre-rendered, trusted, already merge-field-resolved --
+    marked |safe below because it originates from staff-authored
+    AgreementTemplate.body_html, never raw client input),
+  governing_law, direction, confidentiality_term_months,
+  requires_countersignature,
+  signed_by_name, signed_by_title, signed_at, signed_ip, signature_method,
+  countersigned_by_name, countersigned_by_title, countersigned_at,
+  document_hash (short, for the footer -- NOT the full SHA-256),
+  audit_events (list of {event_type, actor_name, actor_type, created_at,
+    ip_address} -- only used in "certificate" mode).
+
+Every field above is optional from the template's point of view -- a
+field left unset renders its section as "—" or omits the block
+entirely (see the signature block's "awaiting signature" state), it
+never fakes a placeholder value. Matches the "never pad with N/A"
+principle property_intel/pdf.py already documents for its own report.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+  @page {
+    size: A4;
+    margin: 26mm 18mm 22mm 18mm;
+    @bottom-left {
+      content: "Document ID: {{ reference_id }}" "  ·  Hash: {{ document_hash or '—' }}";
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 7.5pt;
+      color: #8a8f98;
+    }
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 7.5pt;
+      color: #8a8f98;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 10.5pt;
+    line-height: 1.55;
+    color: #1a1d23;
+    margin: 0;
+  }
+
+  .letterhead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2.5pt solid #12213a;
+    padding-bottom: 10pt;
+    margin-bottom: 18pt;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .letterhead .company {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #12213a;
+    letter-spacing: 0.3pt;
+  }
+  .letterhead .company-address {
+    font-size: 8pt;
+    color: #6b7280;
+    margin-top: 2pt;
+    max-width: 70mm;
+  }
+  .letterhead .doc-meta {
+    text-align: right;
+    font-size: 8pt;
+    color: #6b7280;
+  }
+  .doc-type-badge {
+    display: inline-block;
+    background: #12213a;
+    color: #ffffff;
+    font-size: 7.5pt;
+    font-weight: 700;
+    letter-spacing: 0.6pt;
+    text-transform: uppercase;
+    padding: 3pt 8pt;
+    border-radius: 3pt;
+    margin-bottom: 4pt;
+  }
+
+  h1.doc-title {
+    font-size: 17pt;
+    font-weight: 700;
+    color: #12213a;
+    margin: 0 0 4pt 0;
+  }
+  .doc-subtitle {
+    font-size: 9.5pt;
+    color: #6b7280;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    margin-bottom: 16pt;
+  }
+
+  .parties {
+    display: flex;
+    gap: 14pt;
+    margin: 14pt 0 18pt 0;
+  }
+  .party-box {
+    flex: 1;
+    border: 0.75pt solid #d8dce3;
+    border-radius: 4pt;
+    padding: 9pt 11pt;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .party-box .party-role {
+    font-size: 7.5pt;
+    font-weight: 700;
+    letter-spacing: 0.5pt;
+    text-transform: uppercase;
+    color: #8a8f98;
+    margin-bottom: 3pt;
+  }
+  .party-box .party-name {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: #1a1d23;
+  }
+  .party-box .party-detail {
+    font-size: 8.5pt;
+    color: #6b7280;
+    margin-top: 1pt;
+  }
+
+  .terms-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border-top: 0.75pt solid #d8dce3;
+    border-bottom: 0.75pt solid #d8dce3;
+    margin: 14pt 0 18pt 0;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .term-cell {
+    flex: 1;
+    min-width: 30%;
+    padding: 8pt 10pt;
+    border-right: 0.75pt solid #d8dce3;
+  }
+  .term-cell:last-child { border-right: none; }
+  .term-cell .term-label {
+    font-size: 7pt;
+    font-weight: 700;
+    letter-spacing: 0.4pt;
+    text-transform: uppercase;
+    color: #8a8f98;
+    margin-bottom: 2pt;
+  }
+  .term-cell .term-value {
+    font-size: 9.5pt;
+    color: #1a1d23;
+    font-weight: 600;
+  }
+
+  .clause-body {
+    margin: 16pt 0 24pt 0;
+  }
+  .clause-body h2 {
+    font-size: 11.5pt;
+    color: #12213a;
+    margin: 16pt 0 6pt 0;
+  }
+  .clause-body p {
+    margin: 0 0 9pt 0;
+    text-align: justify;
+  }
+  .clause-body ol, .clause-body ul {
+    margin: 0 0 9pt 20pt;
+    padding: 0;
+  }
+
+  .signature-section {
+    margin-top: 26pt;
+    page-break-inside: avoid;
+  }
+  .signature-section .section-heading {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.5pt;
+    text-transform: uppercase;
+    color: #8a8f98;
+    border-bottom: 0.75pt solid #d8dce3;
+    padding-bottom: 4pt;
+    margin-bottom: 12pt;
+  }
+  .signature-blocks {
+    display: flex;
+    gap: 16pt;
+  }
+  .sig-block {
+    flex: 1;
+    border: 0.75pt solid #d8dce3;
+    border-radius: 4pt;
+    padding: 12pt;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .sig-block.executed {
+    border-color: #1e7a4c;
+    background: #f4faf6;
+  }
+  .sig-block.pending {
+    border-color: #d8dce3;
+    background: #fafbfc;
+  }
+  .sig-block .sig-role {
+    font-size: 7.5pt;
+    font-weight: 700;
+    letter-spacing: 0.5pt;
+    text-transform: uppercase;
+    color: #8a8f98;
+    margin-bottom: 8pt;
+  }
+  .sig-block .sig-name {
+    font-family: 'Georgia', serif;
+    font-size: 15pt;
+    font-style: italic;
+    color: #12213a;
+    border-bottom: 0.75pt solid #1a1d23;
+    padding-bottom: 6pt;
+    margin-bottom: 6pt;
+    min-height: 20pt;
+  }
+  .sig-block .sig-title { font-size: 8.5pt; color: #1a1d23; }
+  .sig-block .sig-meta { font-size: 7.5pt; color: #8a8f98; margin-top: 4pt; line-height: 1.5; }
+  .sig-block .sig-pending-label {
+    font-size: 9pt;
+    color: #b45309;
+    font-style: italic;
+  }
+
+  .integrity-note {
+    margin-top: 14pt;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 7.5pt;
+    color: #8a8f98;
+    border-top: 0.75pt solid #d8dce3;
+    padding-top: 8pt;
+    line-height: 1.5;
+  }
+
+  /* ── Certificate mode ────────────────────────────────────────── */
+  .certificate-heading {
+    text-align: center;
+    margin-bottom: 22pt;
+  }
+  .certificate-heading .cert-badge {
+    display: inline-block;
+    background: #1e7a4c;
+    color: #ffffff;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.6pt;
+    text-transform: uppercase;
+    padding: 4pt 10pt;
+    border-radius: 3pt;
+    margin-bottom: 8pt;
+  }
+  .certificate-heading h1 { margin: 0; }
+
+  table.audit-trail {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 8.5pt;
+    margin-top: 10pt;
+  }
+  table.audit-trail th {
+    text-align: left;
+    font-size: 7pt;
+    font-weight: 700;
+    letter-spacing: 0.4pt;
+    text-transform: uppercase;
+    color: #8a8f98;
+    border-bottom: 1pt solid #12213a;
+    padding: 6pt 8pt;
+  }
+  table.audit-trail td {
+    padding: 7pt 8pt;
+    border-bottom: 0.5pt solid #e5e7eb;
+    vertical-align: top;
+  }
+  table.audit-trail td.event-type { font-weight: 700; color: #12213a; }
+  table.audit-trail td.event-meta { color: #8a8f98; font-size: 7.5pt; }
+</style>
+</head>
+<body>
+
+{% if render_mode == "certificate" %}
+
+  {# ── Certificate of Completion ─────────────────────────────────── #}
+  <div class="letterhead">
+    <div>
+      <div class="company">{{ company_name or "Scape" }}</div>
+      <div class="company-address">{{ company_address or "" }}</div>
+    </div>
+    <div class="doc-meta">
+      <div>Generated {{ generated_date }}</div>
+      <div>Ref: {{ reference_id }}</div>
+    </div>
+  </div>
+
+  <div class="certificate-heading">
+    <div class="cert-badge">Certificate of Completion</div>
+    <h1 class="doc-title">{{ title }}</h1>
+    <div class="doc-subtitle">{{ document_type_label }} — fully executed record</div>
+  </div>
+
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-role">Party — {{ company_name or "Scape" }}</div>
+      <div class="party-name">{{ countersigned_by_name or "—" }}</div>
+      {% if countersigned_by_title %}<div class="party-detail">{{ countersigned_by_title }}</div>{% endif %}
+      {% if countersigned_at %}<div class="party-detail">Countersigned {{ countersigned_at }}</div>{% endif %}
+    </div>
+    <div class="party-box">
+      <div class="party-role">Party — Client</div>
+      <div class="party-name">{{ client_name }}</div>
+      {% if client_company %}<div class="party-detail">{{ client_company }}</div>{% endif %}
+      <div class="party-detail">{{ client_email }}</div>
+      {% if signed_at %}<div class="party-detail">Signed {{ signed_at }}{% if signed_ip %} from {{ signed_ip }}{% endif %}</div>{% endif %}
+    </div>
+  </div>
+
+  <table class="audit-trail">
+    <thead>
+      <tr>
+        <th style="width:18%;">When</th>
+        <th style="width:20%;">Event</th>
+        <th style="width:22%;">Actor</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in audit_events %}
+      <tr>
+        <td class="event-meta">{{ event.created_at }}</td>
+        <td class="event-type">{{ event.event_type }}</td>
+        <td>{{ event.actor_name or event.actor_type }}</td>
+        <td class="event-meta">{{ event.ip_address or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="integrity-note">
+    This certificate is a system-generated record of every action taken on
+    document {{ reference_id }} from creation through execution. It is
+    appended for audit purposes and is not itself a signed legal
+    instrument — the executed agreement is the document identified above.
+    Content integrity hash: {{ document_hash or "—" }}.
+  </div>
+
+{% else %}
+
+  {# ── The actual agreement document ─────────────────────────────── #}
+  <div class="letterhead">
+    <div>
+      <div class="company">{{ company_name or "Scape" }}</div>
+      <div class="company-address">{{ company_address or "" }}</div>
+    </div>
+    <div class="doc-meta">
+      <div class="doc-type-badge">{{ document_type_label }}</div><br>
+      <div>Ref: {{ reference_id }}</div>
+      <div>Generated {{ generated_date }}</div>
+    </div>
+  </div>
+
+  <h1 class="doc-title">{{ title }}</h1>
+  <div class="doc-subtitle">
+    Effective {{ effective_date or "on the date of last signature" }}
+    {% if governing_law %} · Governed by {{ governing_law }}{% endif %}
+  </div>
+
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-role">Disclosing / Contracting Party</div>
+      <div class="party-name">{{ company_name or "Scape" }}</div>
+      {% if company_address %}<div class="party-detail">{{ company_address }}</div>{% endif %}
+    </div>
+    <div class="party-box">
+      <div class="party-role">Client</div>
+      <div class="party-name">{{ client_name }}</div>
+      {% if client_company %}<div class="party-detail">{{ client_company }}</div>{% endif %}
+      <div class="party-detail">{{ client_email }}</div>
+    </div>
+  </div>
+
+  {% if direction or confidentiality_term_months or governing_law %}
+  <div class="terms-strip">
+    {% if direction %}
+    <div class="term-cell">
+      <div class="term-label">Disclosure Direction</div>
+      <div class="term-value">{{ direction }}</div>
+    </div>
+    {% endif %}
+    {% if confidentiality_term_months %}
+    <div class="term-cell">
+      <div class="term-label">Confidentiality Term</div>
+      <div class="term-value">{{ confidentiality_term_months }} months post-termination</div>
+    </div>
+    {% endif %}
+    {% if governing_law %}
+    <div class="term-cell">
+      <div class="term-label">Governing Law</div>
+      <div class="term-value">{{ governing_law }}</div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="clause-body">
+    {{ content_html | safe }}
+  </div>
+
+  <div class="signature-section">
+    <div class="section-heading">Signatures</div>
+    <div class="signature-blocks">
+
+      <div class="sig-block {{ 'executed' if signed_at else 'pending' }}">
+        <div class="sig-role">Client</div>
+        {% if signed_at %}
+          <div class="sig-name">{{ signed_by_name }}</div>
+          {% if signed_by_title %}<div class="sig-title">{{ signed_by_title }}</div>{% endif %}
+          <div class="sig-meta">
+            Signed {{ signed_at }}{% if signature_method %} · {{ signature_method }}{% endif %}<br>
+            {% if signed_ip %}IP {{ signed_ip }}<br>{% endif %}
+            On behalf of {{ client_company or client_name }}
+          </div>
+        {% else %}
+          <div class="sig-name">&nbsp;</div>
+          <div class="sig-pending-label">Awaiting signature</div>
+        {% endif %}
+      </div>
+
+      {% if requires_countersignature %}
+      <div class="sig-block {{ 'executed' if countersigned_at else 'pending' }}">
+        <div class="sig-role">{{ company_name or "Scape" }}</div>
+        {% if countersigned_at %}
+          <div class="sig-name">{{ countersigned_by_name }}</div>
+          {% if countersigned_by_title %}<div class="sig-title">{{ countersigned_by_title }}</div>{% endif %}
+          <div class="sig-meta">Countersigned {{ countersigned_at }}</div>
+        {% else %}
+          <div class="sig-name">&nbsp;</div>
+          <div class="sig-pending-label">Awaiting countersignature</div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>
+
+    <div class="integrity-note">
+      This document was generated and, where signed above, executed
+      electronically via {{ company_name or "Scape" }}'s agreement system.
+      Document integrity hash: {{ document_hash or "pending — assigned at signature" }}.
+      A full signing history is available as a separate Certificate of
+      Completion once this document is fully executed.
+    </div>
+  </div>
+
+{% endif %}
+
+</body>
+</html>

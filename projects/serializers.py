@@ -24,6 +24,29 @@ def _validate_attachment_file(value):
     return value
 
 
+
+def _validate_budget_value(value):
+    """Shared by create and update — mirrors the model's
+    project_budget_non_negative CheckConstraint so bad input fails as a
+    clean 400 here instead of an IntegrityError from the database."""
+    if value is not None and value < 0:
+        raise serializers.ValidationError("Budget can't be negative.")
+    return value
+
+
+def _validate_currency_value(value):
+    """Shared by create and update — mirrors Project.CURRENCY_CHOICES."""
+    from .models import Project
+
+    valid_codes = {code for code, _ in Project.CURRENCY_CHOICES}
+    value = (value or "").upper()
+    if value not in valid_codes:
+        raise serializers.ValidationError(
+            f"'{value}' isn't a supported currency. Choose one of: {', '.join(sorted(valid_codes))}."
+        )
+    return value
+
+
 # ── Client-facing ─────────────────────────────────────────────────────
 
 class ProjectCreateSerializer(serializers.ModelSerializer):
@@ -53,6 +76,12 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
     def validate_attachment(self, value):
         return _validate_attachment_file(value)
 
+    def validate_budget(self, value):
+        return _validate_budget_value(value)
+
+    def validate_currency(self, value):
+        return _validate_currency_value(value)
+
 
 class ProjectUpdateSerializer(serializers.ModelSerializer):
     """PATCH body for a client editing their own project — only while
@@ -67,6 +96,12 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
 
     def validate_attachment(self, value):
         return _validate_attachment_file(value)
+
+    def validate_budget(self, value):
+        return _validate_budget_value(value)
+
+    def validate_currency(self, value):
+        return _validate_currency_value(value)
 
 
 class ProjectSerializer(serializers.ModelSerializer):

@@ -1,10 +1,12 @@
 """
-contracts/signals.py
 Two receivers:
   - handle_milestone_payment: listens for payments.signals.payment_succeeded
     — this is where purpose="contract_milestone" gets meaning. payments
     itself has none. Mirrors property_intel/signals.py's
-    handle_property_report_payment.
+    handle_property_report_payment. Moves the milestone to "funded",
+    NOT the old terminal "paid" — funding is now the start of the
+    escrow workflow (submit → review → release), not the end of it.
+    See contracts/models.py's module docstring for the full lifecycle.
   - broadcast_new_message: fires on every Message save and pushes it to
     the contract's websocket group. This is what makes messaging actually
     real-time regardless of whether the message came in over the REST
@@ -24,9 +26,9 @@ from rest_framework.renderers import JSONRenderer
 from payments.signals import payment_succeeded
 
 from . import emails
-from .models import Message, Milestone
+from .models import Invoice, Message, Milestone, MilestoneEvent
 from .serializers import MessageSerializer
-from .services import MILESTONE_PAYMENT_PURPOSE
+from .services import INVOICE_PAYMENT_PURPOSE, MILESTONE_PAYMENT_PURPOSE, settle_invoice_from_paystack
 
 logger = logging.getLogger("contracts")
 
@@ -74,22 +76,64 @@ def handle_milestone_payment(sender, reference, purpose, external_reference,
         )
         return
 
-    if milestone.status == "paid":
-        return  # webhook + manual verify both landing here — must be a no-op the 2nd time
+    if milestone.status != "invoiced":
+        # Already funded (webhook + manual verify racing — must be a
+        # no-op the 2nd time), or further along, or in some other state
+        # entirely (disputed/cancelled) that a late-arriving webhook
+        # must never silently override. mark_funded() below guards this
+        # too, but checking here avoids opening a transaction for a
+        # request we already know is a no-op.
+        return
 
     with db_transaction.atomic():
-        changed = milestone.mark_paid(paid_at=paid_at)
+        changed = milestone.mark_funded(funded_at=paid_at)
         if not changed:
             return
+
+        MilestoneEvent.objects.create(
+            milestone=milestone, event_type="funded", actor_type="system",
+            metadata={"paystack_reference": reference, "amount": str(amount), "currency": currency},
+        )
 
         contract = milestone.contract
         if contract.status in ("signed", "sent", "negotiating"):
             contract.status = "active"
             contract.save(update_fields=["status"])
 
-    logger.info("Milestone %s marked paid via %s (contract %s)", milestone.id, reference, milestone.contract_id)
+    logger.info("Milestone %s marked funded via %s (contract %s)", milestone.id, reference, milestone.contract_id)
 
     try:
-        emails.send_milestone_paid_email(milestone)
+        emails.send_milestone_funded_email(milestone)
     except Exception:
-        logger.exception("Failed to send milestone-paid email for milestone %s", milestone.id)
+        logger.exception("Failed to send milestone-funded email for milestone %s", milestone.id)
+
+
+@receiver(payment_succeeded)
+def handle_invoice_payment(sender, reference, purpose, external_reference,
+                            amount, currency, email, channel, paid_at,
+                            metadata, authorization_details=None, **kwargs):
+    """Bundled-invoice counterpart to handle_milestone_payment above —
+    purpose="contract_invoice" gets meaning here. Settles the WHOLE
+    invoice (and every milestone attached to it) through the same
+    single choke point (_settle_invoice) record_manual_invoice_payment()
+    uses, so in-platform and manually-recorded payments never drift."""
+    if purpose != INVOICE_PAYMENT_PURPOSE:
+        return
+
+    try:
+        invoice = Invoice.objects.select_related("contract").get(pk=external_reference)
+    except (Invoice.DoesNotExist, ValueError, TypeError):
+        logger.error(
+            "payment_succeeded for purpose=%s reference=%s but no matching Invoice (external_reference=%r)",
+            purpose, reference, external_reference,
+        )
+        return
+
+    if invoice.status != "sent":
+        # Already paid (webhook + manual verify racing — must be a
+        # no-op the 2nd time), or voided after checkout started — a
+        # late-arriving webhook must never resurrect or double-settle it.
+        return
+
+    settle_invoice_from_paystack(invoice, paid_at=paid_at, paystack_reference=reference)
+    logger.info("Invoice %s settled via %s (contract %s)", invoice.invoice_number, reference, invoice.contract_id)
