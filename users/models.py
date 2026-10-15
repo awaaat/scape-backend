@@ -101,6 +101,12 @@ class UserSignup(models.Model):
     # since actual bytes live in object storage, never on local disk.
     avatar_url = models.URLField(blank=True)
 
+    # Which front-end app the signup came from. See users/app_sources.py.
+    signup_source = models.CharField(
+        max_length=20, default="property", db_index=True,
+        help_text="Which front-end app the person signed up from (property / portal / thesis). Drives which app's URL and branding the emails use.",
+    )
+
     # Links back to the visitor session (see visitors/middleware.py) the
     # same way Lead and JobApplication already do — lets you see what
     # pages someone browsed before signing up, without duplicating that
@@ -186,3 +192,30 @@ class UserSignup(models.Model):
         self.email_verified_at = timezone.now()
         self.email_verification_token_hash = ""  # spent — can't be replayed
         self.save(update_fields=["email_verified", "email_verified_at", "email_verification_token_hash"])
+
+
+class AppMembership(models.Model):
+    """
+    One row per (person, Scape app they've used). The ACCOUNT is shared across
+    every app; this just records where they've been, so a portal user who later
+    opens the property app is the same person, not a conflicting second signup.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="app_memberships",
+    )
+    source = models.CharField(max_length=20)
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["first_seen_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "source"], name="uniq_user_app_membership"),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} @ {self.source}"
+
+
+from . import checks  # noqa: E402,F401  (registers the Scape app settings check)

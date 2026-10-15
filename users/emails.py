@@ -1,11 +1,11 @@
 """
 users/emails.py
 
-Sends the signup verification email using the Anymail/Brevo backend
-already configured in backend/settings.py (EMAIL_BACKEND =
-"anymail.backends.brevo.EmailBackend"). No custom Brevo client needed —
-that's why verification emails were silently failing before ("Brevo
-client not wired up yet" in your logs was this exact import failing).
+Verification / welcome / password-reset emails. Each one is sent in the context
+of ONE Scape app (property / portal / thesis...): links point at THAT app's
+front-end and the branding matches it. Pass `source` to override (e.g. the app
+the person is using right now); otherwise the account's signup_source is used.
+All senders are fire-and-log: a delivery failure never breaks the request.
 """
 import logging
 
@@ -14,134 +14,92 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 
+from .app_registry import (
+    brand_for,
+    build_url,
+    normalize_source,
+    default_source,
+    show_free_reports,
+)
+
 logger = logging.getLogger(__name__)
 
 
-def build_verification_url(raw_token, signup_id):
-    base_url = getattr(settings, "FRONTEND_BASE_URL", "").rstrip("/")
-    return f"{base_url}/verify-email?token={raw_token}&id={signup_id}"
+def _source_of(obj, override=None):
+    return normalize_source(override) or normalize_source(getattr(obj, "signup_source", None)) or default_source()
 
 
-def send_welcome_email(signup):
-    """
-    Fired once, right after email verification succeeds (see
-    VerifyEmailView.post in views.py). Fire-and-log like
-    send_verification_email — a delivery failure here must never break
-    the verification confirmation itself.
-    """
+def _support_email():
+    return getattr(settings, "REPLY_TO_EMAIL", "info@scapedatasolutions.com")
+
+
+def _send(subject, template, context, to_email):
+    try:
+        html_body = render_to_string(template, context)
+    except Exception:
+        logger.exception("Could not render %s for %s", template, to_email)
+        return False
+
+    try:
+        message = EmailMultiAlternatives(
+            subject=subject,
+            body=strip_tags(html_body),
+            from_email=getattr(settings, "WELCOME_FROM_EMAIL", settings.DEFAULT_FROM_EMAIL),
+            to=[to_email],
+            reply_to=[getattr(settings, "REPLY_TO_EMAIL", settings.DEFAULT_FROM_EMAIL)],
+        )
+        message.attach_alternative(html_body, "text/html")
+        message.send(fail_silently=False)
+        logger.info("%s sent to %s", template, to_email)
+        return True
+    except Exception:
+        logger.exception("Failed to send %s to %s", template, to_email)
+        return False
+
+
+def build_verification_url(raw_token, signup_id, source=None):
+    return build_url(normalize_source(source) or default_source(), "verify", token=raw_token, id=signup_id)
+
+
+def build_reset_url(uid, raw_token, source=None):
+    return build_url(normalize_source(source) or default_source(), "reset", uid=uid, token=raw_token)
+
+
+def send_verification_email(signup, raw_token, source=None):
+    source = _source_of(signup, source)
+    brand = brand_for(source)
+    context = {
+        "full_name": signup.full_name,
+        "verification_url": build_verification_url(raw_token, signup.id, source),
+        "expires_in_hours": 48,
+        "support_email": _support_email(),
+        "brand_name": brand,
+    }
+    return _send(f"Verify your {brand} account", "email/verification_email.html", context, signup.email)
+
+
+def send_welcome_email(signup, source=None):
+    source = _source_of(signup, source)
+    brand = brand_for(source)
     context = {
         "full_name": signup.full_name,
         "free_reports": getattr(settings, "PROPERTY_REPORT_FREE_TIER_DISPLAY", 3),
-        "dashboard_url": f"{getattr(settings, 'FRONTEND_BASE_URL', '').rstrip('/')}/dashboard",
-        "support_email": getattr(settings, "REPLY_TO_EMAIL", "info@scapedatasolutions.com"),
+        "show_free_reports": show_free_reports(source),
+        "dashboard_url": build_url(source, "dashboard"),
+        "support_email": _support_email(),
+        "brand_name": brand,
     }
-
-    try:
-        html_body = render_to_string("email/welcome_email.html", context)
-    except Exception:
-        logger.exception("Could not render welcome email template for %s", signup.email)
-        return False
-
-    text_body = strip_tags(html_body)
-
-    try:
-        message = EmailMultiAlternatives(
-            subject="Welcome to Scape Property Intelligence",
-            body=text_body,
-            from_email=getattr(settings, "WELCOME_FROM_EMAIL", settings.DEFAULT_FROM_EMAIL),
-            to=[signup.email],
-            reply_to=[getattr(settings, "REPLY_TO_EMAIL", settings.DEFAULT_FROM_EMAIL)],
-        )
-        message.attach_alternative(html_body, "text/html")
-        message.send(fail_silently=False)
-        logger.info("Welcome email sent to %s", signup.email)
-        return True
-    except Exception:
-        logger.exception("Failed to send welcome email to %s", signup.email)
-        return False
+    return _send(f"Welcome to {brand}", "email/welcome_email.html", context, signup.email)
 
 
-def build_reset_url(uid, raw_token):
-    base_url = getattr(settings, "FRONTEND_BASE_URL", "").rstrip("/")
-    return f"{base_url}/reset-password?uid={uid}&token={raw_token}"
-
-
-def send_password_reset_email(user, uid, raw_token):
-    """
-    Fire-and-log, same posture as send_verification_email — a delivery
-    failure here must never leak whether the account exists or break
-    the request flow. The view always returns 202 regardless.
-    """
+def send_password_reset_email(user, uid, raw_token, source=None):
     signup = getattr(user, "signup_profile", None)
-    full_name = signup.full_name if signup else (user.first_name or user.email)
-    reset_url = build_reset_url(uid, raw_token)
-
+    source = _source_of(signup, source)
+    brand = brand_for(source)
     context = {
-        "full_name": full_name,
-        "reset_url": reset_url,
-        "support_email": getattr(settings, "REPLY_TO_EMAIL", "info@scapedatasolutions.com"),
+        "full_name": signup.full_name if signup else (user.first_name or user.email),
+        "reset_url": build_reset_url(uid, raw_token, source),
+        "support_email": _support_email(),
+        "brand_name": brand,
     }
-
-    try:
-        html_body = render_to_string("email/password_reset_email.html", context)
-    except Exception:
-        logger.exception("Could not render password reset email template for %s", user.email)
-        return False
-
-    text_body = strip_tags(html_body)
-
-    try:
-        message = EmailMultiAlternatives(
-            subject="Reset your Scape Data Solutions password",
-            body=text_body,
-            from_email=getattr(settings, "WELCOME_FROM_EMAIL", settings.DEFAULT_FROM_EMAIL),
-            to=[user.email],
-            reply_to=[getattr(settings, "REPLY_TO_EMAIL", settings.DEFAULT_FROM_EMAIL)],
-        )
-        message.attach_alternative(html_body, "text/html")
-        message.send(fail_silently=False)
-        logger.info("Password reset email sent to %s", user.email)
-        return True
-    except Exception:
-        logger.exception("Failed to send password reset email to %s", user.email)
-        return False
-
-
-def send_verification_email(signup, raw_token):
-    """
-    Fire-and-log: a delivery failure here must never break the signup
-    itself. Returns True/False for whether the send call completed
-    without raising (not a delivery guarantee).
-    """
-    verification_url = build_verification_url(raw_token, signup.id)
-
-    context = {
-        "full_name": signup.full_name,
-        "verification_url": verification_url,
-        "expires_in_hours": 48,
-        "support_email": getattr(settings, "REPLY_TO_EMAIL", "info@scapedatasolutions.com"),
-    }
-
-    try:
-        html_body = render_to_string("email/verification_email.html", context)
-    except Exception:
-        logger.exception("Could not render verification email template for %s", signup.email)
-        return False
-
-    text_body = strip_tags(html_body)
-
-    try:
-        message = EmailMultiAlternatives(
-            subject="Verify your Scape Data Solutions account",
-            body=text_body,
-            from_email=getattr(settings, "WELCOME_FROM_EMAIL", settings.DEFAULT_FROM_EMAIL),
-            to=[signup.email],
-            reply_to=[getattr(settings, "REPLY_TO_EMAIL", settings.DEFAULT_FROM_EMAIL)],
-        )
-        message.attach_alternative(html_body, "text/html")
-        message.send(fail_silently=False)
-        logger.info("Verification email sent to %s", signup.email)
-        return True
-    except Exception:
-        logger.exception("Failed to send verification email to %s", signup.email)
-        return False
+    return _send(f"Reset your {brand} password", "email/password_reset_email.html", context, user.email)

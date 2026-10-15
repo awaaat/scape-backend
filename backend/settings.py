@@ -415,3 +415,60 @@ INVOICE_PAYMENT_METHODS = [
 # for the race-safe InvoiceCounter it drives.
 INVOICE_NUMBER_PREFIX = env("INVOICE_NUMBER_PREFIX", default="SCP")
 INVOICE_DEFAULT_DUE_DAYS = env.int("INVOICE_DEFAULT_DUE_DAYS", default=14)
+
+
+# ── Multi-app signup routing (users/app_sources.py) ─────────────────────────
+# One account system, several front-ends. Each app gets its own base URL so
+# verification / welcome / reset emails send people back to THE APP THEY USED.
+# Set these in your .env — they fall back to FRONTEND_BASE_URL until you do.
+import os as _os
+_default_front = globals().get("FRONTEND_BASE_URL", "")
+APP_BASE_URLS = {
+    "property": _os.environ.get("PROPERTY_APP_BASE_URL", _default_front),
+    "portal": _os.environ.get("PORTAL_BASE_URL", _default_front),
+    "thesis": _os.environ.get("THESIS_BASE_URL", _default_front),
+}
+# Per-app front-end routes. Adjust to match each app's router.
+APP_PATHS = {
+    "property": {"verify": "/verify-email", "reset": "/reset-password", "dashboard": "/dashboard"},
+    "portal":   {"verify": "/verify-email", "reset": "/reset-password", "dashboard": "/dashboard"},
+    "thesis":   {"verify": "/verify-email", "reset": "/reset-password", "dashboard": "/dashboard"},
+}
+
+
+# ── Scape multi-app registry (users/app_registry.py) ────────────────────────
+# One account system, many front-ends. Each app: its own URL, routes and brand,
+# so verification / welcome / reset emails return people to THE APP THEY USED.
+# ADD A NEW APP = add one entry below. Set the env vars in .env; until you do,
+# they fall back to FRONTEND_BASE_URL and `manage.py check` warns you.
+import os as _os
+
+
+def _scape_origins(env_name):
+    return [o.strip() for o in _os.environ.get(env_name, "").split(",") if o.strip()]
+
+
+_scape_front = globals().get("FRONTEND_BASE_URL", "")
+SCAPE_APPS = {
+    "property": {
+        "name": "Scape Property Intelligence",
+        "base_url": _os.environ.get("PROPERTY_APP_BASE_URL", _scape_front),
+        "extra_origins": _scape_origins("PROPERTY_APP_EXTRA_ORIGINS"),   # e.g. www., staging, http://localhost:5173
+        "paths": {"verify": "/verify-email", "reset": "/reset-password", "dashboard": "/dashboard", "login": "/login"},
+        "show_free_reports": True,
+    },
+    "portal": {
+        "name": "Scape Client Portal",
+        "base_url": _os.environ.get("PORTAL_BASE_URL", _scape_front),
+        "extra_origins": _scape_origins("PORTAL_EXTRA_ORIGINS"),
+        "paths": {"verify": "/verify-email", "reset": "/reset-password", "dashboard": "/dashboard", "login": "/login"},
+    },
+    "thesis": {
+        "name": "Scape Thesis",
+        "base_url": _os.environ.get("THESIS_BASE_URL", _scape_front),
+        "extra_origins": _scape_origins("THESIS_EXTRA_ORIGINS"),
+        "paths": {"verify": "/verify-email", "reset": "/reset-password", "dashboard": "/dashboard", "login": "/login"},
+    },
+}
+SCAPE_DEFAULT_APP = "property"            # used only when nothing identifies the calling app
+SCAPE_RESEND_COOLDOWN_SECONDS = 60        # per-account throttle on resend-verification / password-reset emails

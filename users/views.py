@@ -1,6 +1,10 @@
+import logging
+
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.tokens import default_token_generator
-from django.shortcuts import get_object_or_404
+from django.core.cache import cache
+from django.db import IntegrityError, transaction
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import status
@@ -10,7 +14,9 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import storage
+from .app_registry import build_url, detect_source, resolve_source
 from .emails import send_password_reset_email, send_verification_email, send_welcome_email
+from .memberships import record_app_membership
 from .models import UserSignup
 from .serializers import (
     ChangePasswordSerializer,
@@ -25,70 +31,124 @@ from .serializers import (
     UserSignupReadSerializer,
 )
 
+logger = logging.getLogger(__name__)
+
+ACCOUNT_EXISTS_MESSAGE = (
+    "You already have a Scape account. Sign in with the same email and password - "
+    "one account works across all Scape apps."
+)
+
+
+def _cooldown_ok(scope, key):
+    """
+    True if this action may proceed; False if it was already done within the cooldown.
+    Stops someone using resend/reset as an email-bomb. Fails OPEN if the cache is
+    down - a cache outage must never block real users from getting their email.
+    """
+    seconds = getattr(settings, "SCAPE_RESEND_COOLDOWN_SECONDS", 60)
+    if not seconds or seconds <= 0:
+        return True
+    try:
+        return bool(cache.add(f"users:cooldown:{scope}:{key}", 1, seconds))
+    except Exception:
+        logger.warning("Cooldown cache unavailable (%s) - allowing", scope, exc_info=True)
+        return True
+
 
 class SignupView(APIView):
-    """POST /api/users/signup/ — create a signup record and email a
-    verification link. Mirrors property_intel's pin-submission view:
-    validate → persist → fire the side effect → return a read serializer."""
+    """POST /api/users/signup/ - create the account, record which app it came
+    from, and email a verification link that returns them to THAT app."""
 
     def post(self, request):
         serializer = UserSignupCreateSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        signup = serializer.save()
+        if not serializer.is_valid():
+            body = dict(serializer.errors)
+            email_errors = serializer.errors.get("email") or []
+            if any(getattr(e, "code", None) == "account_exists" for e in email_errors):
+                body["code"] = "account_exists"
+                body["detail"] = ACCOUNT_EXISTS_MESSAGE
+            return Response(body, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            signup = serializer.save()
+        except IntegrityError:
+            # Lost a uniqueness race between validation and insert. Friendly 400, not a 500.
+            return Response(
+                {"detail": ACCOUNT_EXISTS_MESSAGE, "code": "account_exists"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         raw_token = signup.generate_verification_token()
-        send_verification_email(signup, raw_token)
+        _cooldown_ok("verify", signup.pk)  # starts the resend cooldown
+        # on_commit: if an outer transaction rolls back, no email goes out for a ghost account.
+        transaction.on_commit(lambda: send_verification_email(signup, raw_token))
 
         return Response(UserSignupReadSerializer(signup).data, status=status.HTTP_201_CREATED)
 
 
 class ResendVerificationView(APIView):
-    """POST /api/users/verify-email/resend/ — issues a fresh token and
-    re-sends. Doesn't reveal whether the email exists in the system
-    (always 202), same information-disclosure posture as OTP resend
-    in property_intel."""
+    """POST /api/users/verify-email/resend/ - always 202 (never reveals whether
+    the email exists). The new link goes to the app the person is using NOW."""
 
     def post(self, request):
         serializer = EmailVerificationRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"]
 
-        try:
-            signup = UserSignup.objects.get(email__iexact=email, is_active=True)
-        except UserSignup.DoesNotExist:
+        signup = UserSignup.objects.filter(email__iexact=email, is_active=True).first()
+        if signup is None or signup.email_verified:
             return Response(status=status.HTTP_202_ACCEPTED)
 
-        if not signup.email_verified:
-            raw_token = signup.generate_verification_token()
-            send_verification_email(signup, raw_token)
+        if not _cooldown_ok("verify", signup.pk):
+            return Response(status=status.HTTP_202_ACCEPTED)
 
+        source = resolve_source(request, serializer.validated_data.get("source"), fallback=signup.signup_source)
+        raw_token = signup.generate_verification_token()
+        send_verification_email(signup, raw_token, source=source)
         return Response(status=status.HTTP_202_ACCEPTED)
 
 
 class VerifyEmailView(APIView):
-    """POST /api/users/verify-email/confirm/ — the link the person clicks
-    lands on a frontend page that then POSTs {id, token} here."""
+    """POST /api/users/verify-email/confirm/ - the front-end page behind the
+    emailed link POSTs {id, token} here.
+
+    Idempotent and race-safe: double-clicks, link prefetchers, or two tabs can
+    never send the welcome email twice. Wrong id / bad token / deactivated
+    account all return the same generic 400 (no account enumeration)."""
 
     def post(self, request):
         serializer = EmailVerificationConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        signup = get_object_or_404(UserSignup, id=serializer.validated_data["id"])
+        invalid = Response(
+            {"detail": "This verification link is invalid or has expired."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-        if not signup.verify_token(serializer.validated_data["token"]):
-            return Response(
-                {"detail": "This verification link is invalid or has expired."},
-                status=status.HTTP_400_BAD_REQUEST,
+        with transaction.atomic():
+            signup = (
+                UserSignup.objects.select_for_update()
+                .filter(id=serializer.validated_data["id"], is_active=True)
+                .first()
             )
+            if signup is None or not signup.verify_token(serializer.validated_data["token"]):
+                return invalid
+            newly_verified = not signup.email_verified
+            if newly_verified:
+                signup.mark_verified()
 
-        signup.mark_verified()
-        send_welcome_email(signup)
-        return Response(UserSignupReadSerializer(signup).data, status=status.HTTP_200_OK)
+        if newly_verified:
+            transaction.on_commit(lambda: send_welcome_email(signup))
+
+        data = dict(UserSignupReadSerializer(signup).data)
+        data["login_url"] = build_url(signup.signup_source, "login")
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class LoginView(APIView):
-    """POST /api/users/login/ — email + password, returns a JWT pair plus
-    the caller's profile. Mirrors SignupView's response shape."""
+    """POST /api/users/login/ - email + password -> JWT pair + profile. An
+    account created in ANY Scape app can sign in to any other; the app the
+    login came from is recorded (optional `source`, else Origin/Referer)."""
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -100,10 +160,11 @@ class LoginView(APIView):
             password=serializer.validated_data["password"],
         )
         if user is None or not user.is_active:
-            return Response(
-                {"detail": "Invalid email or password."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return Response({"detail": "Invalid email or password."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        source = detect_source(request, serializer.validated_data.get("source"))
+        if source:
+            record_app_membership(user, source)
 
         signup = getattr(user, "signup_profile", None)
         refresh = RefreshToken.for_user(user)
@@ -116,9 +177,6 @@ class LoginView(APIView):
 
 
 class LogoutView(APIView):
-    """POST /api/users/logout/ — blacklists the given refresh token so it
-    can't be used again. Access tokens just expire naturally (30 min)."""
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -130,11 +188,6 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    """GET /api/users/me/ — requires a valid access token.
-    PATCH /api/users/me/ — edit full_name/phone (email is intentionally
-    not editable here; changing it would need re-verification, out of
-    scope for this pass)."""
-
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -155,8 +208,6 @@ class MeView(APIView):
             setattr(signup, field, value)
         signup.save(update_fields=list(serializer.validated_data.keys()) + ["updated_at"])
 
-        # first_name on the auth user backs Overview's greeting — keep it
-        # in sync so "Hi, {first name}" doesn't go stale after a rename.
         if "full_name" in serializer.validated_data:
             request.user.first_name = serializer.validated_data["full_name"].split(" ")[0]
             request.user.save(update_fields=["first_name"])
@@ -165,9 +216,6 @@ class MeView(APIView):
 
 
 class AvatarUploadView(APIView):
-    """POST /api/users/me/avatar/ — multipart, field name "avatar".
-    Uploads via users/storage.py (Supabase), overwriting any existing one."""
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -184,7 +232,10 @@ class AvatarUploadView(APIView):
         except storage.InvalidAvatarUpload as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except storage.StorageUploadFailed:
-            return Response({"detail": "Couldn't upload that image right now — try again shortly."}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {"detail": "Couldn't upload that image right now — try again shortly."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         signup.avatar_url = avatar_url
         signup.save(update_fields=["avatar_url", "updated_at"])
@@ -192,15 +243,6 @@ class AvatarUploadView(APIView):
 
 
 class AccountDeleteView(APIView):
-    """POST /api/users/me/delete/ — body: {password}. Soft-delete: the
-    auth user is deactivated (can never log in again) and the profile
-    is deactivated + anonymized, rather than hard-deleted — same
-    "untick is_active rather than destroy the row" reasoning as
-    UserSignup.is_active's own help_text, and it keeps FK integrity
-    intact for anything referencing this user (contracts.client_user
-    etc. are all on_delete=SET_NULL, but a hard delete would still
-    orphan historical records unnecessarily)."""
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -223,10 +265,8 @@ class AccountDeleteView(APIView):
 
 
 class PasswordResetRequestView(APIView):
-    """POST /api/users/password-reset/request/ — emails a reset link if
-    the address belongs to an active account. Always 202 regardless of
-    outcome — same "don't reveal whether the email exists" posture as
-    ResendVerificationView."""
+    """POST /api/users/password-reset/request/ - always 202. The reset link
+    goes to the app the request came from (else the account's own app)."""
 
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -234,26 +274,26 @@ class PasswordResetRequestView(APIView):
         email = serializer.validated_data["email"]
 
         User = get_user_model()
-        try:
-            user = User.objects.get(username__iexact=email, is_active=True)
-        except User.DoesNotExist:
+        user = User.objects.filter(username__iexact=email, is_active=True).first()
+        if user is None:
             return Response(status=status.HTTP_202_ACCEPTED)
 
+        if not _cooldown_ok("reset", user.pk):
+            return Response(status=status.HTTP_202_ACCEPTED)
+
+        signup = getattr(user, "signup_profile", None)
+        source = resolve_source(
+            request, serializer.validated_data.get("source"),
+            fallback=getattr(signup, "signup_source", None),
+        )
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         raw_token = default_token_generator.make_token(user)
-        send_password_reset_email(user, uid, raw_token)
+        send_password_reset_email(user, uid, raw_token, source=source)
 
         return Response(status=status.HTTP_202_ACCEPTED)
 
 
 class PasswordResetConfirmView(APIView):
-    """POST /api/users/password-reset/confirm/ — the link the person
-    clicks lands on a frontend page that then POSTs {uid, token,
-    new_password} here. Uses Django's own default_token_generator, so
-    the token is single-use in effect: it's derived from the user's
-    current password hash + last login, so it stops validating the
-    instant the password actually changes."""
-
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -263,16 +303,10 @@ class PasswordResetConfirmView(APIView):
             uid = force_str(urlsafe_base64_decode(serializer.validated_data["uid"]))
             user = User.objects.get(pk=uid, is_active=True)
         except (User.DoesNotExist, ValueError, TypeError, OverflowError):
-            return Response(
-                {"detail": "This reset link is invalid or has expired."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "This reset link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not default_token_generator.check_token(user, serializer.validated_data["token"]):
-            return Response(
-                {"detail": "This reset link is invalid or has expired."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "This reset link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
 
         user.set_password(serializer.validated_data["new_password"])
         user.save(update_fields=["password"])
@@ -280,9 +314,6 @@ class PasswordResetConfirmView(APIView):
 
 
 class ChangePasswordView(APIView):
-    """POST /api/users/change-password/ — requires current password to
-    confirm identity before setting a new one."""
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
