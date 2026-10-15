@@ -472,3 +472,12 @@ SCAPE_APPS = {
 }
 SCAPE_DEFAULT_APP = "property"            # used only when nothing identifies the calling app
 SCAPE_RESEND_COOLDOWN_SECONDS = 60        # per-account throttle on resend-verification / password-reset emails
+
+
+# Client Portal serves all its pages under /portal/
+SCAPE_APPS["portal"]["paths"] = {
+    "verify": "/portal/verify-email",
+    "reset": "/portal/reset-password",
+    "dashboard": "/portal/dashboard",
+    "login": "/portal/login",
+}
