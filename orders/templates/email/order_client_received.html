@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>We received your order</title></head>
+<body style="margin:0; padding:0; background-color:#eef1f6; font-family:Helvetica, Arial, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f6; padding:28px 12px;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#ffffff;">
+  <tr><td style="background-color:#0d2b6b; padding:24px 36px;">
+    <span style="font-size:28px; font-weight:900; color:#ffffff; letter-spacing:2px;">SCAPE</span><br>
+    <span style="font-size:11px; color:#aebcdc; letter-spacing:2px;">DATA </span><span style="font-size:11px; font-weight:700; color:#fdb840; letter-spacing:2px;">SOLUTIONS</span>
+  </td></tr>
+  <tr><td style="padding:34px 36px 8px;">
+    <p style="margin:0 0 4px; color:#9aa2b1; font-size:12px; letter-spacing:1px; text-transform:uppercase;">Order {{ order.reference }}</p>
+    <h1 style="margin:0 0 16px; color:#0d2b6b; font-size:22px;">Hi {{ order.name|default:"there" }}, we've got your order.</h1>
+    <p style="margin:0 0 14px; color:#374151; font-size:15px; line-height:1.7;">A specialist is reviewing it now. You'll get scope, timeline and price within <strong>24 hours</strong>. You pay nothing until you agree.</p>
+  </td></tr>
+  <tr><td style="padding:0 36px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f6f8fc; border:1px solid #e7ebf3;">
+      <tr><td style="padding:16px 20px;">
+        <p style="margin:0 0 10px; color:#0d2b6b; font-size:12px; font-weight:700; letter-spacing:.4px; text-transform:uppercase;">What you told us</p>
+        {% for label, value in rows %}
+        <p style="margin:0 0 8px; font-size:13px; color:#374151; line-height:1.55;"><span style="color:#9aa2b1;">{{ label }}:</span> <span style="white-space:pre-wrap;">{{ value }}</span></p>
+        {% endfor %}
+      </td></tr>
+    </table>
+  </td></tr>
+  <tr><td style="padding:0 36px 34px;">
+    <p style="margin:0; color:#374151; font-size:14px; line-height:1.7;">Forgot a file or a detail? Just <strong>reply to this email</strong> and it goes straight to your analyst.</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>

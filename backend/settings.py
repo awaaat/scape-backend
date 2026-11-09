@@ -481,3 +481,52 @@ SCAPE_APPS["portal"]["paths"] = {
     "dashboard": "/portal/dashboard",
     "login": "/portal/login",
 }
+
+# ═══ ORDERS APP v2 — multi-site order collection (added by install_orders_backend.sh) ═══
+if "orders" not in INSTALLED_APPS:
+    INSTALLED_APPS.append("orders")
+
+# Scoped throttles for the order wizard. The orders views opt OUT of the global
+# 30/min anon throttle (it would choke a multi-step wizard on shared campus wifi).
+REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"].update({
+    "order_read": "60/minute",
+    "order_start": "20/minute",
+    "order_save": "120/minute",
+    "order_submit": "10/minute",
+    "order_upload": "20/minute",
+})
+
+# Who is notified about orders. Orders-only: leads/jobs keep using ADMIN_NOTIFICATION_EMAILS.
+# Override on Render with ORDER_NOTIFICATION_EMAILS="a@x.com,b@y.com" (comma-separated).
+# A single site can have its own list via notify_emails=[...] in orders/catalog.py.
+ORDER_NOTIFICATION_EMAILS = env.list("ORDER_NOTIFICATION_EMAILS", default=[
+    "writers.smith112@gmail.com",
+    "info@scapedatasolutions.com",
+    "scapedatasolutions@gmail.com",
+])
+
+# Fallback resume-link base (each site normally supplies its own frontend_url).
+ORDER_FRONTEND_URL = env("ORDER_FRONTEND_URL", default="https://thesis.scapedatasolutions.com")
+# Minutes of silence before a draft with an email/phone counts as abandoned.
+ORDER_ABANDON_MINUTES = env.int("ORDER_ABANDON_MINUTES", default=30)
+ORDER_FILE_MAX_MB = env.int("ORDER_FILE_MAX_MB", default=25)
+ORDER_MAX_FILES = env.int("ORDER_MAX_FILES", default=10)
+# Reuses the project-attachments Supabase bucket unless you set a dedicated one.
+ORDERS_STORAGE_BUCKET = env("ORDERS_STORAGE_BUCKET", default=PROJECTS_STORAGE_BUCKET)
+# Base URL of THIS BACKEND (where /admin/ lives), for the "Open in admin" button.
+# SET THIS on Render, e.g. https://api.scapedatasolutions.com — SITE_DOMAIN is the
+# marketing site, which has no /admin/.
+ORDERS_ADMIN_BASE_URL = env("ORDERS_ADMIN_BASE_URL", default=SITE_DOMAIN)
+# True = send emails inline instead of in a background thread (debugging only).
+ORDERS_SYNC_EMAIL = env.bool("ORDERS_SYNC_EMAIL", default=False)
+
+# Sweep abandoned drafts every 5 min (needs Celery beat; otherwise cron `manage.py sweep_orders`).
+CELERY_BEAT_SCHEDULE["sweep-abandoned-orders"] = {
+    "task": "orders.tasks.sweep_abandoned_orders_task",
+    "schedule": 300.0,
+}
+
+# CORS: accept the apex and every subdomain of scapedatasolutions.com (www., thesis.,
+# portal., future ones). Sites on OTHER domains are allowed automatically for
+# /api/orders/ once registered in orders/catalog.py.
+CORS_ALLOWED_ORIGIN_REGEXES = [r"^https://([a-z0-9-]+\.)*scapedatasolutions\.com$"]
