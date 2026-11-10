@@ -172,6 +172,7 @@ MAIN = build_site(
     "main", name="Scape Data Solutions",
     hosts=["www.scapedatasolutions.com", "scapedatasolutions.com"],
     frontend_url="https://www.scapedatasolutions.com",
+    resume_path="/order",
     categories=[
         {"id": "intel", "title": "Intelligence reports"},
         {"id": "data", "title": "Data and analytics"},
@@ -269,7 +270,8 @@ def resolve_service(site, value):
             return s["slug"], s["label"]
     if low in ("other", "something else", ""):
         return OTHER_SERVICE["slug"], OTHER_SERVICE["label"]
-    return OTHER_SERVICE["slug"], f"Other: {v}"[:150]
+    from django.utils.text import slugify
+    return (slugify(v)[:80] or OTHER_SERVICE["slug"]), v[:150]
 
 
 def public_catalog(site):
