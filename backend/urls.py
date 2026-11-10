@@ -46,3 +46,11 @@ if settings.DEBUG:
 
 # ═══ ORDERS APP (added by install_orders_backend.sh) ═══
 urlpatterns += [path("api/orders/", include("orders.urls"))]
+
+
+# ═══ ORDER ENGAGEMENT LAYER (install_order_engagement.sh) ═══
+# Brevo bounce/complaint webhook: only mounted when ANYMAIL_WEBHOOK_SECRET is set.
+from django.conf import settings as _eng_settings  # noqa: E402
+
+if getattr(_eng_settings, "ANYMAIL", {}).get("WEBHOOK_SECRET"):
+    urlpatterns += [path("anymail/", include("anymail.urls"))]

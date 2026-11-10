@@ -530,3 +530,77 @@ CELERY_BEAT_SCHEDULE["sweep-abandoned-orders"] = {
 # portal., future ones). Sites on OTHER domains are allowed automatically for
 # /api/orders/ once registered in orders/catalog.py.
 CORS_ALLOWED_ORIGIN_REGEXES = [r"^https://([a-z0-9-]+\.)*scapedatasolutions\.com$"]
+
+
+# ═══ ORDER ENGAGEMENT ENGINE (install_order_engagement.sh) ═══════════════════════════
+# Intent alerts + "they left" alerts + reminder ladder + lead scoring + digest.
+# Everything below can be overridden from Render environment variables.
+import sys as _eng_sys  # noqa: E402
+
+# Master kill-switch. Forced OFF under `manage.py test` / pytest so the pre-existing
+# order tests (which count outbox emails) are unaffected; the engagement tests turn it on.
+ORDER_ENGAGEMENT_ENABLED = (
+    env.bool("ORDER_ENGAGEMENT_ENABLED", default=True)
+    and "test" not in _eng_sys.argv and "pytest" not in _eng_sys.modules
+)
+ORDER_INTENT_ALERTS_ENABLED = env.bool("ORDER_INTENT_ALERTS_ENABLED", default=True)
+ORDER_REMINDERS_ENABLED = env.bool("ORDER_REMINDERS_ENABLED", default=True)
+ORDER_DIGEST_ENABLED = env.bool("ORDER_DIGEST_ENABLED", default=True)
+
+# Only orders created at/after this moment are managed (avoids a burst of alerts and
+# reminders for old drafts on first deploy). Set it earlier to include older drafts.
+ORDER_ENGAGEMENT_SINCE = env("ORDER_ENGAGEMENT_SINCE", default="2026-11-10T22:13:52+00:00")
+
+# Alert timing
+ORDER_INTENT_GRACE_SECONDS = env.int("ORDER_INTENT_GRACE_SECONDS", default=90)
+ORDER_INTENT_DEDUPE_HOURS = env.int("ORDER_INTENT_DEDUPE_HOURS", default=6)
+ORDER_EXIT_GRACE_MINUTES = env.int("ORDER_EXIT_GRACE_MINUTES", default=5)
+
+# Reminder ladder: hours of silence since the client's last activity.
+ORDER_REMINDER_LADDER_HOURS = env.list("ORDER_REMINDER_LADDER_HOURS", cast=int, default=[24, 72, 168, 336])
+ORDER_REMINDER_URGENT_LADDER_HOURS = env.list("ORDER_REMINDER_URGENT_LADDER_HOURS", cast=int, default=[4, 24, 48])
+ORDER_URGENT_DAYS = env.int("ORDER_URGENT_DAYS", default=3)
+ORDER_REMINDER_MAX_LIFETIME = env.int("ORDER_REMINDER_MAX_LIFETIME", default=6)
+ORDER_REMINDER_MAX_PER_EMAIL_WEEK = env.int("ORDER_REMINDER_MAX_PER_EMAIL_WEEK", default=3)
+ORDER_REMINDER_MIN_GAP_HOURS = env.int("ORDER_REMINDER_MIN_GAP_HOURS", default=12)
+ORDER_REMINDER_MAX_AGE_DAYS = env.int("ORDER_REMINDER_MAX_AGE_DAYS", default=30)
+ORDER_REMINDER_WINDOW_START_HOUR = env.int("ORDER_REMINDER_WINDOW_START_HOUR", default=8)
+ORDER_REMINDER_WINDOW_END_HOUR = env.int("ORDER_REMINDER_WINDOW_END_HOUR", default=20)
+ORDER_REMINDER_DEFAULT_TZ = env("ORDER_REMINDER_DEFAULT_TZ", default="Africa/Nairobi")
+
+# Lead scoring / escalation
+ORDER_HOT_SCORE = env.int("ORDER_HOT_SCORE", default=65)
+ORDER_WARM_SCORE = env.int("ORDER_WARM_SCORE", default=40)
+ORDER_HOT_FOLLOWUP_HOURS = env.int("ORDER_HOT_FOLLOWUP_HOURS", default=24)
+ORDER_CLICK_FOLLOWUP_HOURS = env.int("ORDER_CLICK_FOLLOWUP_HOURS", default=2)
+
+# Public URL of THIS backend, used for the tracked resume link and the one-click
+# unsubscribe page. Falls back to ORDERS_ADMIN_BASE_URL when you've set that to the API host.
+ORDERS_API_BASE_URL = env(
+    "ORDERS_API_BASE_URL", default=(ORDERS_ADMIN_BASE_URL if ORDERS_ADMIN_BASE_URL != SITE_DOMAIN else ""),
+)
+# Optional: shown in the "need a hand?" reminder, e.g. "+254 700 000 000".
+ORDER_BUSINESS_WHATSAPP = env("ORDER_BUSINESS_WHATSAPP", default="")
+
+# No Celery beat / cron on Render? Set ORDER_ENGINE_INPROCESS=true and the web process runs the
+# engine itself every ORDER_ENGINE_INTERVAL_SECONDS (safe with several workers; claims are atomic).
+ORDER_ENGINE_INPROCESS = env.bool("ORDER_ENGINE_INPROCESS", default=False)
+ORDER_ENGINE_INTERVAL_SECONDS = env.int("ORDER_ENGINE_INTERVAL_SECONDS", default=120)
+
+# Celery beat entries
+from celery.schedules import crontab as _eng_crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE["order-engagement-engine"] = {
+    "task": "orders.tasks.run_order_engagement_task",
+    "schedule": 120.0,
+}
+CELERY_BEAT_SCHEDULE["order-daily-digest"] = {
+    "task": "orders.tasks.send_order_digest_task",
+    "schedule": _eng_crontab(hour=5, minute=0),  # 05:00 UTC = 08:00 Nairobi
+}
+
+# Brevo bounce / complaint / unsubscribe webhook (optional). Set ANYMAIL_WEBHOOK_SECRET="user:long-random"
+# and point Brevo's transactional webhook at https://user:long-random@<api-host>/anymail/brevo/tracking/
+_eng_webhook_secret = env("ANYMAIL_WEBHOOK_SECRET", default="")
+if _eng_webhook_secret:
+    ANYMAIL["WEBHOOK_SECRET"] = _eng_webhook_secret

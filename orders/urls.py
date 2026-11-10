@@ -12,3 +12,16 @@ urlpatterns = [
     path("<str:token>/files/", views.OrderFileUploadView.as_view(), name="orders-files"),
     path("<str:token>/files/<int:file_id>/", views.OrderFileDeleteView.as_view(), name="orders-file-delete"),
 ]
+
+
+# ═══ ORDER ENGAGEMENT LAYER (install_order_engagement.sh) ═══
+# Appended after the literal routes above. All of these are two-segment paths, so
+# the single-segment "<str:token>/" route can never swallow them.
+from . import engagement_views as _engagement_views  # noqa: E402
+
+urlpatterns += [
+    path("unsubscribe/<str:signed>/", _engagement_views.OrderUnsubscribeView.as_view(), name="orders-unsubscribe"),
+    path("<str:token>/resume/", _engagement_views.OrderResumeRedirectView.as_view(), name="orders-resume"),
+    path("<str:token>/leave/", _engagement_views.OrderLeaveView.as_view(), name="orders-leave"),
+    path("<str:token>/return/", _engagement_views.OrderReturnView.as_view(), name="orders-return"),
+]

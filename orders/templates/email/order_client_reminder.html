@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>{{ headline }}</title></head>
+<body style="margin:0; padding:0; background-color:#eef1f6; font-family:Helvetica, Arial, sans-serif;">
+<div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{{ preheader }}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f6; padding:28px 12px;">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#ffffff;">
+  <tr><td style="background-color:#0d2b6b; padding:24px 36px;">
+    <span style="font-size:28px; font-weight:900; color:#ffffff; letter-spacing:2px;">SCAPE</span><br>
+    <span style="font-size:11px; color:#aebcdc; letter-spacing:2px;">DATA </span><span style="font-size:11px; font-weight:700; color:#fdb840; letter-spacing:2px;">SOLUTIONS</span>
+  </td></tr>
+
+  <tr><td style="padding:34px 36px 8px;">
+    <h1 style="margin:0 0 16px; color:#0d2b6b; font-size:22px;">{{ headline }}</h1>
+    {% for p in paragraphs %}
+    <p style="margin:0 0 14px; color:#374151; font-size:15px; line-height:1.7;">{{ p }}</p>
+    {% endfor %}
+  </td></tr>
+
+  {% if urgent and deadline %}
+  <tr><td style="padding:0 36px 12px;">
+    <div style="background-color:#fff4df; border:1px solid #f3d9a4; border-radius:8px; padding:12px 14px; color:#7a5400; font-size:13px;">Your deadline: <strong>{{ deadline }}</strong></div>
+  </td></tr>
+  {% endif %}
+
+  {% if progress_pct >= 20 %}
+  <tr><td style="padding:0 36px 8px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td width="{{ progress_pct }}%" height="8" style="background-color:#2f8a43; font-size:0; line-height:0;">&nbsp;</td>
+      <td height="8" style="background-color:#e7ebf3; font-size:0; line-height:0;">&nbsp;</td>
+    </tr></table>
+    <div style="font-size:12px; color:#9aa2b1; padding-top:5px;">{{ progress_pct }}% complete &middot; {{ saved_answers }} answer{{ saved_answers|pluralize }} saved</div>
+  </td></tr>
+  {% endif %}
+
+  <tr><td align="center" style="padding:14px 36px 26px;">
+    <a href="{{ resume_url }}" style="display:inline-block; background-color:#2f8a43; color:#ffffff; text-decoration:none; font-size:15px; font-weight:700; padding:14px 34px; border-radius:25px;">{{ cta }}</a>
+  </td></tr>
+
+  <tr><td style="padding:0 36px 30px;">
+    <p style="margin:0; color:#374151; font-size:14px; line-height:1.7;">Rather not fill anything in? <strong>Reply to this email</strong> with what you need and your deadline, and we'll take it from there.</p>
+  </td></tr>
+
+  <tr><td style="background-color:#f6f8fc; padding:18px 36px; border-top:1px solid #e7ebf3;">
+    <p style="margin:0 0 6px; color:#9aa2b1; font-size:11px; line-height:1.6;">You're receiving this because you started an order at {{ site.name }}.
+    {% if unsubscribe_url %}<a href="{{ unsubscribe_url }}" style="color:#6b7280;">Unsubscribe from reminders</a>{% else %}Reply with the word &ldquo;unsubscribe&rdquo; to stop these reminders.{% endif %}</p>
+    <p style="margin:0; color:#b6bcc9; font-size:11px;">Scape Data Solutions &middot; Nairobi, Kenya</p>
+  </td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>

@@ -185,3 +185,8 @@ class OrderFile(models.Model):
 
     def __str__(self):
         return self.original_name
+
+
+# ═══ ORDER ENGAGEMENT LAYER (install_order_engagement.sh) ═══
+# Registers EmailSuppression, OrderEngagement and OrderReminderLog under the orders app.
+from .engagement_models import EmailSuppression, OrderEngagement, OrderReminderLog  # noqa: E402,F401
